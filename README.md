@@ -348,7 +348,7 @@ docs/update-readme
 
 # Commit 訊息規則
 
-建議使用簡短且明確的英文描述：
+使用簡短且明確的英文描述，請使用現在簡單式動詞作為開頭：
 
 ```text
 Add GPS position reader
