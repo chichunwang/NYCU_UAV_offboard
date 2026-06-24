@@ -445,16 +445,16 @@ test
 請在此補上團隊統一使用的版本：
 
 ```text
-作業系統：
-Ubuntu 版本：
-ROS 2 版本：
-PX4 版本：
-MAVSDK / MAVROS 版本：
-CMake 版本：
-編譯器版本：
-飛控型號：
-板外電腦：
-通訊模組：
+作業系統：Ubuntu 24.04 LTS（Noble Numbat）
+ROS 2 版本：ROS 2 Jazzy Jalisco
+PX4 版本：PX4 v1.17.0 Stable
+MAVSDK 版本：MAVSDK v3.17.1（若使用 MAVSDK）
+MAVROS 版本：MAVROS 2.14.0（若使用 MAVROS）
+CMake 版本：TBD 執行 cmake --version 確認
+編譯器版本：TBD 執行 g++ --version 確認
+飛控型號：Holybro Pixhawk 6C Mini
+板外電腦：NVIDIA Jetson Orin Nano
+通訊模組：MicoAir LR24-F
 ```
 
 ---
