@@ -1,0 +1,29 @@
+# ROS 2 build output
+build/
+install/
+log/
+
+# CMake
+cmake-build-*/
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+Makefile
+
+# Compiled files
+*.o
+*.obj
+*.exe
+*.out
+*.so
+*.dll
+*.a
+
+# VS Code local settings
+.vscode/
+*.code-workspace
+
+# Temporary files
+*.tmp
+*.log
+*~
