@@ -87,6 +87,9 @@
 ### Jetson Orin Nano 與地面站通訊
 
 - **通訊模組：** MicoAir LR24-F
+- **目前鏈路：** USB Serial 自訂指令協定
+- **遠端操作：** 地面站透過 LR24-F 傳送低頻指令，Orin 的 `lr24_command_node` 呼叫 ROS 2 service
+- **備用測試鏈路：** PPP / SSH 可作為 debug 方案，不作為主控制鏈路
 - **用途：**
   - 傳送板外電腦執行狀態
   - 傳送目標座標
@@ -94,7 +97,7 @@
   - 接收地面站指令
   - 傳送除飛控遙測以外的自訂資料
 
-目前 LR24-F 主要作為 **Jetson Orin Nano 與地面站之間的資料鏈路**，不取代 ELRS 遙控鏈路。
+目前 LR24-F 主要作為 **Jetson Orin Nano 與地面站之間的低頻寬指令鏈路**，不取代 ELRS 遙控鏈路。由於 LR24-F 無線速率約 8 kbps，此鏈路只適合短指令、ACK、低頻狀態回報與少量文字資料，不適合傳影像、高頻 ROS topic 或大量 log。
 
 ## 感測器
 
@@ -195,6 +198,34 @@ LR24-F 地面端
 地面站電腦
 ```
 
+### 地面站觸發 Offboard
+
+```text
+地面站電腦
+    ↓ LR24-F Serial command
+START_OFFBOARD / ENABLE_STREAM / START_MISSION
+    ↓
+Jetson Orin Nano / lr24_command_node
+    ↓ ROS 2 service
+my_offboard_node
+    ↓
+PX4 Offboard setpoint + VehicleCommand
+    ↓
+Pixhawk 6C Mini
+```
+
+### RC/ELRS 觸發 Offboard
+
+```text
+Jetson Orin Nano / my_offboard_node
+    ↓ 持續發布 Offboard setpoint
+Pixhawk 6C Mini
+    ↑
+ELRS 遙控器負責 arm、flight mode 切換與手動接管
+```
+
+`my_offboard_node` 可在啟動後持續發布 Offboard setpoint，讓 PX4 滿足切入 Offboard 的前置條件。若使用 RC/ELRS 流程，PX4 mode 與 arm 由遙控器完成；若使用 LR24 `START_OFFBOARD` 指令，則由 Orin warmup 後送出 Offboard mode 與 arm 指令。
+
 ## 系統分工
 
 | 裝置 | 主要功能 |
@@ -205,7 +236,7 @@ LR24-F 地面端
 | GPS | 提供位置、速度、高度與導航資訊 |
 | 雲台攝影機 | 擷取影像並持續觀測目標 |
 | 飛控數傳模組 | Pixhawk 與地面站之間的 MAVLink 遙測 |
-| LR24-F | Jetson Orin Nano 與地面站之間的自訂資料通訊 |
+| LR24-F | Jetson Orin Nano 與地面站之間的自訂 Serial 指令通訊 |
 | 地面站 | 飛行監控、任務規劃、參數設定與板外系統控制 |
 
 ## 安全設計
@@ -227,7 +258,7 @@ LR24-F 地面端
 - [ ] Pixhawk 韌體版本
 - [X] 使用 PX4 或 ArduPilot: 使用PX4
 - [ ] MAVSDK 或 MAVROS 的使用方式
-- [ ] LR24-F 通訊格式與封包協定
+- [x] LR24-F 通訊格式與封包協定: 目前採自訂 Serial 指令封包，Orin 端轉成 ROS 2 service
 - [ ] LR24-F 鮑率、空中速率及發射功率
 - [x] GPS 型號與連接介面
 - [ ] 失聯保護及緊急接管流程
