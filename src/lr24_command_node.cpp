@@ -331,7 +331,7 @@ private:
         const uint8_t actual = xor_checksum(payload);
         if (actual != expected) {
             std::ostringstream oss;
-            oss << "bad checksum expected " << to_hex(actual);
+            oss << "bad checksum expected " << to_hex(actual) << " got " << checksum_text;
             error = oss.str();
             return false;
         }
