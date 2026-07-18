@@ -97,8 +97,8 @@ python3 tools/send_lr24_command.py --port /dev/ttyUSB0 LAND
 
 詳細使用方式請看：
 
-- [docs/serial_elrs_offboard.md](docs/serial_elrs_offboard.md)
-- [docs/ppp_lr24_ssh_offboard.md](docs/ppp_lr24_ssh_offboard.md)
+- [LR24 Serial 指令協定與 RC/ELRS Offboard 操作](lr24_serial_program.md)
+- [LR24-F PPP / SSH Offboard 操作架構](lr24_ppp_program.md)
 
 ## 設計原則
 
