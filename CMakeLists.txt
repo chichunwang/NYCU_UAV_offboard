@@ -12,10 +12,16 @@ endif()
 find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(px4_msgs REQUIRED)
+find_package(rosidl_default_generators REQUIRED)
 find_package(std_srvs REQUIRED)
+
+rosidl_generate_interfaces(${PROJECT_NAME}
+  "srv/GotoGlobal.srv"
+)
 
 add_executable(my_offboard_node src/my_offboard_node.cpp)
 add_executable(lr24_command_node src/lr24_command_node.cpp)
+add_executable(global_goto_node src/global_goto_node.cpp)
 
 ament_target_dependencies(my_offboard_node
   rclcpp
@@ -28,9 +34,21 @@ ament_target_dependencies(lr24_command_node
   std_srvs
 )
 
+ament_target_dependencies(global_goto_node
+  rclcpp
+  px4_msgs
+  std_srvs
+)
+
+rosidl_get_typesupport_target(cpp_typesupport_target
+  ${PROJECT_NAME} "rosidl_typesupport_cpp")
+target_link_libraries(lr24_command_node "${cpp_typesupport_target}")
+target_link_libraries(global_goto_node "${cpp_typesupport_target}")
+
 install(TARGETS
   my_offboard_node
   lr24_command_node
+  global_goto_node
   DESTINATION lib/${PROJECT_NAME}
 )
 
@@ -41,6 +59,7 @@ install(DIRECTORY
 
 if(BUILD_TESTING)
   find_package(ament_lint_auto REQUIRED)
+  find_package(ament_cmake_pytest REQUIRED)
   # the following line skips the linter which checks for copyrights
   # comment the line when a copyright and license is added to all source files
   set(ament_cmake_copyright_FOUND TRUE)
@@ -49,6 +68,10 @@ if(BUILD_TESTING)
   # a copyright and license is added to all source files
   set(ament_cmake_cpplint_FOUND TRUE)
   ament_lint_auto_find_test_dependencies()
+  ament_add_pytest_test(test_send_lr24_command
+    test/test_send_lr24_command.py
+  )
 endif()
 
+ament_export_dependencies(rosidl_default_runtime)
 ament_package()

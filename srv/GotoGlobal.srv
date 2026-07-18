@@ -1,0 +1,10 @@
+uint8 ALTITUDE_REFERENCE_AMSL=0
+uint8 ALTITUDE_REFERENCE_RELATIVE_HOME=1
+
+float64 latitude_deg
+float64 longitude_deg
+float32 altitude_m
+uint8 altitude_reference
+---
+bool success
+string message

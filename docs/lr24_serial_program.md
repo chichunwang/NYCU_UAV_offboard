@@ -1,6 +1,34 @@
 # LR24-F Serial 指令協定與 RC/ELRS Offboard 操作
 
-本專案目前建議的實機控制架構是：
+## GPS 座標 GOTO：請使用新的安全流程
+
+若目標是從地面端輸入 GPS 座標，讓 RPi / Jetson Orin 經 Pixhawk 導引固定翼飛往該位置，請改用 [LR24 GPS GOTO 與 Pixhawk 連線操作指南](gps_goto_program.md)。新流程為：
+
+```text
+地面端 LR24-F
+    ↓ checksummed GOTO / GOTO_AMSL / RTL
+空中端 LR24-F / lr24_command_node
+    ↓ ROS 2 service
+global_goto_node
+    ↓ PX4 uXRCE-DDS / VehicleCommand
+Pixhawk / PX4
+```
+
+空中端啟動方式如下；`lr24_port` 必須換成該機器實際的 LR24 `/dev/serial/by-id/...`，而且不能是 Pixhawk TELEM2 的 USB-UART 裝置：
+
+```bash
+ros2 launch my_offboard_cpp serial_gps_goto.launch.py \
+  lr24_port:=/dev/serial/by-id/REPLACE_WITH_AIRBORNE_LR24 \
+  lr24_baud_rate:=115200
+```
+
+新流程支援 `STATUS`、`GOTO latitude longitude relative_home_altitude_m`、`GOTO_AMSL latitude longitude altitude_amsl_m` 與 `RTL`。它只啟動 `global_goto_node` 和 `lr24_command_node`，**不啟動本文件下方的 `my_offboard_node`，也不會自動 arm、起飛或降落**。固定翼抵達目標後會繞點盤旋，不會懸停。
+
+不要同時啟動 `serial_gps_goto.launch.py` 與下方舊版 `serial_elrs_offboard.launch.py`。GPS GOTO 上實機前必須先完成 `gz_rc_cessna` 固定翼 SITL、拆槳測試及 RC/ELRS 接管演練。
+
+## 舊版本地 NED Offboard 軌跡
+
+以下內容保留用於既有本地 NED 方形軌跡與 Offboard stream 測試，不是 GPS GOTO 的實機操作流程。其架構是：
 
 ```text
 地面筆電
@@ -91,6 +119,10 @@ python3 tools/send_lr24_command.py --port /dev/ttyUSB0 LAND
 ```bash
 python3 tools/send_lr24_command.py --port /dev/ttyUSB0 --simple PING
 ```
+
+`--simple` 僅供非飛航動作的鏈路測試；`ENABLE_STREAM`、`START_MISSION`、
+`START_OFFBOARD`、`STOP_OFFBOARD`、`LAND`、`GOTO*` 與 `RTL/ABORT` 都必須使用
+上方工具預設產生的 checksummed frame。
 
 正式封包會長這樣：
 
