@@ -193,7 +193,7 @@ def parse_response_frame(line: str | bytes) -> ResponseFrame:
     expected_checksum = int(checksum_text, 16)
     if actual_checksum != expected_checksum:
         raise ValueError(
-            f"bad response checksum; expected {actual_checksum:02X}"
+            f"bad response checksum; expected {actual_checksum:02X} got {expected_checksum:02X}"
         )
 
     fields = payload.split(",", 3)
