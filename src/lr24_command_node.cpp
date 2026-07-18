@@ -684,15 +684,36 @@ private:
             return;
         }
 
-        const ssize_t written = write(serial_fd_, text.data(), text.size());
-        if (written < 0) {
-            RCLCPP_ERROR(this->get_logger(), "Serial write error: %s", std::strerror(errno));
-        } else if (static_cast<size_t>(written) != text.size()) {
-            RCLCPP_ERROR(
-                this->get_logger(),
-                "Serial short write: wrote %zd of %zu bytes",
-                written,
-                text.size());
+        size_t offset = 0;
+        const auto deadline = std::chrono::steady_clock::now() + 50ms;
+
+        while (offset < text.size()) {
+            const ssize_t n = write(
+                serial_fd_,
+                text.data() + offset,
+                text.size() - offset);
+
+            if (n > 0) {
+                offset += static_cast<size_t>(n);
+                continue;
+            }
+
+            if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK) &&
+                std::chrono::steady_clock::now() < deadline)
+            {
+                continue;
+            }
+
+            if (n < 0) {
+                RCLCPP_ERROR(this->get_logger(), "Serial write error: %s", std::strerror(errno));
+            } else {
+                RCLCPP_ERROR(
+                    this->get_logger(),
+                    "Serial short write: wrote %zu of %zu bytes",
+                    offset,
+                    text.size());
+            }
+            break;
         }
     }
 
