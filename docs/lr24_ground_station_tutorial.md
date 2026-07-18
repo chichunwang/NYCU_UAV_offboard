@@ -30,7 +30,7 @@ send_lr24_command.py
 3. 本專案的 `tools/send_lr24_command.py`。
 4. 一顆已配對的 LR24-F。
 
-QGroundControl 可以另外用來看地圖、模式與遙測，但它不是這條 LR24 指令鏈的一部分，也不能占用 LR24 的 COM / serial port。
+QGroundControl 可以另外用來看地圖、模式與遙測，但它不是這條 LR24 指令鏈的一部分，也不能占用 LR24 的 COM / serial port。若要讓 QGC 顯示實際飛機狀態，必須另外準備一條已設定好的 MAVLink 路徑，例如另一個 Pixhawk telemetry port／遙測電台、Pixhawk USB，或網路 MAVLink。供 uXRCE-DDS 使用的 TELEM2 與這顆傳送自訂文字指令的 LR24 都不能同時拿給 QGC 使用。
 
 ## 2. 完整資料路徑
 
@@ -71,21 +71,43 @@ Pixhawk / PX4
 
 ## 3. 兩顆 LR24-F 的前置設定
 
-本專案不會自動設定或配對 LR24。兩顆 LR24 必須先透過設備的設定工具確認：
+LR24 的 radio 設定不由本專案程式管理。原廠說明指出，兩顆使用出廠預設值的 LR24-F 通電後會自動 bind，連線成功時綠燈恆亮；若需要修改參數，使用原廠 [MicoAssistant](https://micoair.com/assistant/)。Windows 若未辨識 USB serial，從原廠 [Download 頁面](https://micoair.com/downloads/) 安裝 LR24-F/P 使用的 CP210x driver。完整硬體規格與原廠設定畫面可參考 [LR24-F 官方產品／操作頁](https://micoair.com/radio_telemetry_lr24f/)。
+
+MicoAssistant 網頁版需使用 Chrome 或 Edge：先勾選／啟用 `Radio Config`，再選擇 LR24 的 COM port、baud rate 並連線。出廠 USB interface 預設通常是 `57600`；目前本專案指令範例使用 `115200`，所以兩端必須選擇同一種做法：
+
+1. 用 MicoAssistant 將兩顆 LR24 的 USB UART baud 都設成 `115200`，儲存並重新上電；之後照本文件原指令使用。
+2. 保留兩顆的 `57600`，但空中 launch 必須加 `lr24_baud_rate:=57600`，地面每個命令也必須加 `--baud 57600`。
+
+不要只改其中一顆或只改程式一端。設定工具顯示的實際值優先於對出廠值的假設。
+
+如果選擇保留 `57600`，兩端指令形式如下：
+
+```bash
+# 空中 Orin / RPi
+ros2 launch my_offboard_cpp serial_gps_goto.launch.py \
+  lr24_port:="$LR24_SERIAL" lr24_baud_rate:=57600
+```
+
+```powershell
+# Windows 地面端；PING、STATUS、GOTO、RTL 都要保留 --baud 57600
+py .\tools\send_lr24_command.py --port COM7 --baud 57600 PING
+```
+
+兩顆 LR24 必須確認：
 
 | 項目 | 設定 |
 |---|---|
 | 工作模式 | Transparent Serial／透明串列傳輸 |
-| UART baud rate | 兩端皆為 `115200` bps |
+| USB UART baud rate | 兩端與程式一致；本文件主流程使用 `115200` bps |
 | 無線傳輸速率 | 兩端一致；目前文件以約 `8 kbps` 為基準 |
 | 頻道／頻率 | 兩端一致 |
 | Network ID | 兩端一致 |
 | 天線 | 通電前先接好 |
 | 桌面測試 | 低發射功率、相距約 1～2 公尺 |
 
-UART 的 `115200 bps` 是電腦和 LR24 之間的速率，不等於無線鏈路的 `8 kbps`。
+USB UART 的 `57600`／`115200 bps` 是電腦和 LR24 之間選定的速率，不等於無線鏈路的傳輸速率。
 
-完成設定後，關閉 LR24 設定工具或任何 serial terminal。一般情況下，同一個 COM / serial port 同一時間只能由一個程式開啟。
+完成設定後，關閉 MicoAssistant 或任何 serial terminal。一般情況下，同一個 COM / serial port 同一時間只能由一個程式開啟。
 
 如果尚未確認透明鏈路是否可靠，先完成 [LR24-F Link Test 使用教學](lr24_link_test_tutorial.md)。
 
@@ -180,7 +202,10 @@ py -m pip install pyserial
 ```powershell
 python --version
 python -m pip install pyserial
+Set-Alias -Name py -Value python
 ```
+
+最後一行會在目前 PowerShell 視窗把 `py` 指向 `python`，因此後續教學可以繼續照抄 `py ...`。若重新開一個 PowerShell 視窗且仍沒有 Python Launcher，要重新設定 alias，或把後續所有 `py` 改成 `python`。
 
 ### 5.3 找出地面端 LR24 的 COM port
 
@@ -310,7 +335,7 @@ sudo usermod -aG dialout "$USER"
 4. `STATUS` 有回覆。
 5. 未 arm、未起飛時，GOTO 必須被拒絕。
 
-### 步驟 2：飛手使用 RC / QGroundControl 正常起飛
+### 步驟 2：飛手保持有效 RC / ELRS 鏈路並正常起飛
 
 GPS GOTO node 不會幫你：
 
@@ -319,7 +344,7 @@ GPS GOTO node 不會幫你：
 - 控制手拋／跑道起飛流程；
 - 自動降落。
 
-必須由飛手使用 RC / QGroundControl 按照固定翼正常流程完成 arm、起飛並爬升到安全高度。
+必須由飛手在有效且獨立的 RC / ELRS manual-control link 下，按照固定翼正常流程完成 arm、起飛並爬升到安全高度。QGroundControl 可以透過前述另一條 MAVLink 路徑協助設定與監看，但不能取代此系統要求的 RC/manual-control link；若 PX4 回報 `manual_control_signal_lost`，GOTO 會被拒絕。
 
 ### 步驟 3：再次查詢 STATUS
 
@@ -487,7 +512,7 @@ node 仍會將它換算成相對 Home 高度並套用 30～120 m 的預設限制
 
 先依序：
 
-1. 由飛手確認 QGroundControl 的實際 mode 和目標。
+1. 由飛手透過 RC 狀態及另一條 MAVLink 路徑上的 QGroundControl 確認實際 mode 和目標；若沒有獨立 QGC 鏈路，直接以 RC 接管並停止遠端命令測試。
 2. 嘗試 `STATUS`。
 3. 準備用 RC 接管。
 4. 確認 PX4 沒有執行舊目標後，才決定是否送新命令。
@@ -516,7 +541,7 @@ py .\tools\send_lr24_command.py --port COM7 `
 | Windows 找不到 COM port | USB 線、驅動、LR24 供電或裝置辨識失敗 | 換資料線／USB port，查看裝置管理員與 `serial.tools.list_ports` |
 | `Access is denied`／無法開啟 COM | QGC、LR24 設定工具或 serial terminal 正在占用 | 關閉其他程式後再執行；同一時間只開一個程式 |
 | Ubuntu `Permission denied` | 使用者不在 `dialout` | 加入 `dialout`，登出再登入 |
-| 有 `>` 但沒有 `<` | 錯誤 port／baud、兩顆 LR24 未配對、非透明模式、空中 node 未啟動 | 先確認 115200、相同頻道與 Network ID，再檢查空中 launch |
+| 有 `>` 但沒有 `<` | 錯誤 port／baud、兩顆 LR24 未配對、非透明模式、空中 node 未啟動 | 先確認兩顆 LR24 與兩端程式使用相同 baud（57600 或 115200）、相同頻道與 Network ID，再檢查空中 launch |
 | PING timeout | 問題位於地面 serial、LR24 無線鏈路或空中 `lr24_command_node` | 不要檢查 GPS；先把 PING 修通 |
 | PING 成功，但 STATUS 回 `ROS service not available` | `global_goto_node` 未啟動或已崩潰 | 檢查 `serial_gps_goto.launch.py` 的 Terminal |
 | STATUS 有 ACK，但 `ready_for_goto=false` | PX4/GPS/Home/RC/arming/airborne/failsafe 條件未滿足 | 讀取 `readiness_reason`，處理後重查 STATUS |
@@ -528,7 +553,7 @@ py .\tools\send_lr24_command.py --port COM7 `
 
 ```text
 PING 失敗
-  └─ 修地面 COM、兩顆 LR24、115200、空中 serial node
+  └─ 修地面 COM、兩端一致的 baud、兩顆 LR24、空中 serial node
 
 PING 成功，但 STATUS service unavailable
   └─ 修空中 ROS launch / global_goto_node
@@ -565,7 +590,7 @@ GOTO 是一次性 PX4 reposition command，不是需要地面持續傳送的 Off
 ### 桌面／拆槳
 
 - [ ] 兩顆 LR24 天線已接好。
-- [ ] 兩端為透明模式、115200、相同頻道與 Network ID。
+- [ ] 兩端為透明模式、使用相同 baud、相同頻道與 Network ID。
 - [ ] Orin 的 Pixhawk serial 與 LR24 serial 是不同裝置。
 - [ ] Agent 正在執行。
 - [ ] GPS GOTO launch 正在執行。
@@ -588,4 +613,3 @@ GOTO 是一次性 PX4 reposition command，不是需要地面持續傳送的 Off
 - [ ] 一次只送一個經確認的 GOTO。
 - [ ] ACK 後仍持續監看 QGC、STATUS 和飛機目視狀態。
 - [ ] 異常時優先 RC 接管，不依賴 LR24 一定可用。
-
