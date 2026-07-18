@@ -297,7 +297,10 @@ def main(argv: Iterable[str] | None = None) -> int:
         parser.error(str(exc))
 
     if serial is None:
-        parser.error("pyserial is missing; install it with: sudo apt install python3-serial")
+        parser.error(
+            "pyserial is missing; install with 'python -m pip install pyserial' "
+            "or, on Ubuntu, 'sudo apt install python3-serial'"
+        )
 
     with serial.Serial(args.port, args.baud, timeout=0.2) as serial_port:
         serial_port.write(frame.encode("ascii"))

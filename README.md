@@ -53,7 +53,7 @@ Pixhawk 飛控
 
 目前已提供 LR24 低頻指令到 PX4 的固定翼單點導航流程：地面端輸入 `GOTO latitude longitude relative_home_altitude_m`，空中端完成 GPS、Home、飛行狀態、距離與高度檢查後，以 PX4 `DO_REPOSITION` 進入 Auto Loiter，飛抵目標後繞點。
 
-此流程不會自動 arm、起飛或降落，且不使用舊版的本地 NED 方形 Offboard 範例。完整的 Pixhawk uXRCE-DDS 接線、建置、SITL 與實機操作步驟請見 [docs/gps_goto_program.md](docs/gps_goto_program.md)。
+此流程不會自動 arm、起飛或降落，且不使用舊版的本地 NED 方形 Offboard 範例。第一次從地面筆電操作 LR24 請看 [地面站控制完整教學](docs/lr24_ground_station_tutorial.md)；Pixhawk uXRCE-DDS 接線、建置、SITL 與實機工程說明請見 [GPS GOTO 操作指南](docs/gps_goto_program.md)。
 
 ---
 

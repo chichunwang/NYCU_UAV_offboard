@@ -2,6 +2,8 @@
 
 此分支用於開發 **地面站（Ground Control Station）與 Jetson Orin 之間的通訊模組**。
 
+第一次實際操作請先看 [LR24-F 地面站控制完整教學](lr24_ground_station_tutorial.md)；該文件包含 Windows COM port、Ubuntu serial device、空中端常駐程序與 `PING → STATUS → GOTO → RTL` 的完整順序。
+
 目前使用 **MicoAir LR24-F** 作為無線通訊設備。LR24-F 以 USB Serial 連接兩端電腦，目前主架構採用 **自訂 Serial 指令協定**，由地面站送低頻控制指令給 Jetson Orin，再由 Orin 本機呼叫 ROS 2 service 與 PX4 Offboard topic。
 
 RC/ELRS 保留為獨立控制鏈路，用於手動飛行、切換 PX4 flight mode、arm/disarm 與緊急接管。
