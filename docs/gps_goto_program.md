@@ -2,6 +2,8 @@
 
 本流程讓地面端透過 LR24-F 傳送單一 GPS 目標給 RPi / Jetson Orin，再由 `global_goto_node` 經 PX4 uXRCE-DDS 將重新定位指令交給 Pixhawk。
 
+> 如果你只想知道「地面筆電接上 LR24 後到底要輸入什麼」，請先看 [LR24-F 地面站控制完整教學](lr24_ground_station_tutorial.md)。該文件以 Windows PowerShell 為主，另附 Ubuntu 指令、預期回覆與問題排查。
+
 > **安全邊界：** `global_goto_node` 不會主動發出 arm、takeoff 或 land command。飛手必須先用 QGroundControl 或 RC/ELRS 完成固定翼起飛，並保留能立即切換模式接管的獨立 RC 鏈路。`GOTO` 只接受已解鎖、已離地且飛控/GPS 狀態符合安全條件的飛機。若操作員另送 `RTL`，PX4 是否最終降落仍取決於其 Return 參數。
 
 ## 1. 連線架構：兩條不同的序列埠
@@ -136,6 +138,7 @@ MicroXRCEAgent --help
 
 ```bash
 NYCU_ROS_WS=/absolute/path/to/nycu_ros_ws
+NYCU_ROS_WS=/home/pi/NYCU_ROS_WS
 cd "$NYCU_ROS_WS/src"
 git clone --branch release/1.17 https://github.com/PX4/px4_msgs.git
 ```
@@ -177,7 +180,7 @@ source /opt/ros/jazzy/setup.bash
 source "$NYCU_ROS_WS/install/setup.bash"
 
 ros2 topic list | grep '^/fmu/'
-ros2 topic echo /fmu/out/vehicle_status px4_msgs/msg/VehicleStatus --qos-reliability best_effort --once
+ros2 topic echo /fmu/out/vehicle_status_v1 px4_msgs/msg/VehicleStatus --qos-reliability best_effort --once
 ros2 topic echo /fmu/out/vehicle_global_position px4_msgs/msg/VehicleGlobalPosition --qos-reliability best_effort --once
 ros2 topic echo /fmu/out/vehicle_gps_position px4_msgs/msg/SensorGps --qos-reliability best_effort --once
 ros2 topic echo /fmu/out/home_position px4_msgs/msg/HomePosition --qos-reliability best_effort --once
@@ -283,6 +286,8 @@ ros2 launch my_offboard_cpp serial_gps_goto.launch.py \
 安全參數必須依實際空域、固定翼轉彎半徑、地理圍欄及法規調整；在 SITL 通過前不要放寬。這些應用層限制不能取代 PX4 geofence 與 failsafe。
 
 ## 8. 地面端指令
+
+本節是指令參考。第一次操作請改由 [LR24-F 地面站控制完整教學](lr24_ground_station_tutorial.md) 依序完成接線、Windows／Ubuntu serial port、PING、STATUS、GOTO 與 RTL 測試。
 
 地面電腦也應使用自己的 `/dev/serial/by-id/...`，不要照抄空中端名稱：
 
