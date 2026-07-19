@@ -1,0 +1,24 @@
+diff --git a/src/modules/uxrce_dds_client/dds_topics.yaml b/src/modules/uxrce_dds_client/dds_topics.yaml
+index eb0d86c..b8859dd 100644
+--- a/src/modules/uxrce_dds_client/dds_topics.yaml
++++ b/src/modules/uxrce_dds_client/dds_topics.yaml
+@@ -29,6 +29,9 @@ publications:
+   - topic: /fmu/out/failsafe_flags
+     type: px4_msgs::msg::FailsafeFlags
+ 
++  - topic: /fmu/out/home_position
++    type: px4_msgs::msg::HomePosition
++
+   - topic: /fmu/out/manual_control_setpoint
+     type: px4_msgs::msg::ManualControlSetpoint
+ 
+@@ -62,6 +65,9 @@ publications:
+   - topic: /fmu/out/vehicle_gps_position
+     type: px4_msgs::msg::SensorGps
+ 
++  - topic: /fmu/out/vehicle_land_detected
++    type: px4_msgs::msg::VehicleLandDetected
++
+   - topic: /fmu/out/vehicle_local_position
+     type: px4_msgs::msg::VehicleLocalPosition
+ 

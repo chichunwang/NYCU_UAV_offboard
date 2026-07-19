@@ -55,6 +55,11 @@ Pixhawk 飛控
 
 此流程不會自動 arm、起飛或降落，且不使用舊版的本地 NED 方形 Offboard 範例。第一次從地面筆電操作 LR24 請看 [地面站控制完整教學](docs/lr24_ground_station_tutorial.md)；Pixhawk uXRCE-DDS 接線、建置、SITL 與實機工程說明請見 [GPS GOTO 操作指南](docs/gps_goto_program.md)。
 
+目前 GPS GOTO 固定使用 `px4_msgs release/1.15` 與 PX4 v1.15.4。由於 stock
+v1.15.4 不會透過 DDS 發布本流程必要的 Home 與 land-detected topics，實機與 SITL
+都必須使用 [專案提供的 PX4 DDS patch](patches/px4-v1.15.4-gps-goto-dds.patch)
+重新建置；只切換 `px4_msgs` branch 不足以執行本流程。
+
 ---
 
 # 開發里程碑
@@ -453,7 +458,9 @@ test
 ```text
 作業系統：Ubuntu 24.04 LTS（Noble Numbat）
 ROS 2 版本：ROS 2 Jazzy Jalisco
-PX4 版本：PX4 v1.17.0 Stable
+PX4 版本：PX4 v1.15.4 + NYCU GPS GOTO DDS patch
+px4_msgs 版本：release/1.15 branch
+Micro XRCE-DDS Agent：v2.4.3（Jazzy / Fast DDS 2.14）
 MAVSDK 版本：MAVSDK v3.17.1（若使用 MAVSDK）
 MAVROS 版本：MAVROS 2.14.0（若使用 MAVROS）
 CMake 版本：TBD 執行 cmake --version 確認
@@ -462,6 +469,10 @@ CMake 版本：TBD 執行 cmake --version 確認
 板外電腦：NVIDIA Jetson Orin Nano
 通訊模組：MicoAir LR24-F
 ```
+
+Ubuntu 24.04 / Jazzy 是本專案既有部署組合，不在 PX4 v1.15 上游列出的
+Ubuntu 22.04 / Humble baseline 內；更新依賴後必須重新完成乾淨建置、v1.15.4 SITL、
+拆槳測試與 RC 接管驗證。
 
 ---
 

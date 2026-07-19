@@ -15,6 +15,10 @@ find_package(px4_msgs REQUIRED)
 find_package(rosidl_default_generators REQUIRED)
 find_package(std_srvs REQUIRED)
 
+# px4_msgs release branches currently share the same package.xml version, so tests
+# validate the installed message schema rather than relying on a version constraint.
+get_filename_component(PX4_MSGS_SHARE_DIR "${px4_msgs_DIR}/.." ABSOLUTE)
+
 rosidl_generate_interfaces(${PROJECT_NAME}
   "srv/GotoGlobal.srv"
 )
@@ -70,6 +74,12 @@ if(BUILD_TESTING)
   ament_lint_auto_find_test_dependencies()
   ament_add_pytest_test(test_send_lr24_command
     test/test_send_lr24_command.py
+  )
+  ament_add_pytest_test(test_px4_msgs_115_schema
+    test/test_px4_msgs_115_schema.py
+  )
+  set_tests_properties(test_px4_msgs_115_schema PROPERTIES
+    ENVIRONMENT "PX4_MSGS_DIR=${PX4_MSGS_SHARE_DIR}/msg"
   )
 endif()
 

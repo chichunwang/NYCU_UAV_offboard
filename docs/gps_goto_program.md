@@ -62,6 +62,7 @@ sudo usermod -aG dialout "$USER"
 Pixhawk 6C Mini 的 TELEM2 UART TX/RX/CTS/RTS 是 **3.3 V 邏輯**，第 1 腳則是 **+5 V 電源**。
 
 - Pixhawk TX 接轉接器 RX，Pixhawk RX 接轉接器 TX，GND 必須共地。
+- PX4 v1.15.4 的 uXRCE-DDS serial transport 不啟用 CRTSCTS；本流程只接 TX、RX、GND，CTS/RTS 不必接。
 - USB-to-UART 必須使用 3.3 V TTL 邏輯；RS-232 電壓不可直接接入。
 - RPi / Orin 若使用板載 UART，必須先查清楚其 I/O 電壓；1.8 V UART 需要電平轉換器，否則可能損壞板子。
 - 伴飛電腦若已由自己的電源供電，**不要連接 TELEM2 的 +5 V 腳，也不要用 TELEM2 供電給 Orin/RPi**。
@@ -73,13 +74,61 @@ Pixhawk 6C Mini 的 TELEM2 UART TX/RX/CTS/RTS 是 **3.3 V 邏輯**，第 1 腳�
 
 | 元件 | 版本 |
 |---|---|
-| Ubuntu | 24.04 LTS |
-| ROS 2 | Jazzy |
-| PX4 | v1.17.x；實機與 SITL 應使用相同 minor 版本 |
-| `px4_msgs` | `release/1.17` branch |
-| Micro XRCE-DDS Agent | v2.4.3 |
+| Ubuntu | 24.04 LTS（本專案部署環境） |
+| ROS 2 | Jazzy（本專案部署環境） |
+| PX4 | v1.15.4 + 本專案 DDS topic patch；實機與 SITL 必須使用同一份 source tree |
+| `px4_msgs` | `release/1.15` branch |
+| Micro XRCE-DDS Agent | v2.4.3（ROS 2 Jazzy / Fast DDS 2.14） |
 
-PX4 firmware 與 `px4_msgs` 的 message definitions 必須相符。不要將 PX4 v1.17 實機直接搭配 `px4_msgs` 的 `main` branch。
+PX4 firmware 與 `px4_msgs` 的 message definitions 必須相符。不要將 PX4 v1.15.4
+實機搭配 `px4_msgs` 的 `main` 或任何非 `release/1.15` branch。
+
+PX4 v1.15 上游文件正式列出的 ROS 2 baseline 是 Ubuntu 22.04 / Humble；
+`px4_msgs release/1.15` 的上游支援表沒有列出 Ubuntu 24.04 / Jazzy。本專案保留既有
+Jazzy 部署環境，因此每次更新後都必須先做乾淨的 colcon build、下述 v1.15.4 SITL
+與拆槳測試，不能把「可編譯」視為上游已驗證。若改用 Humble，Agent 應依官方矩陣改為
+v2.4.2，且所有 terminal 都要 source Humble，不能混用兩套 ROS 環境。
+
+### 2.1 PX4 v1.15.4 必須套用 DDS topic patch
+
+Stock PX4 v1.15.4 的 `dds_topics.yaml` 沒有發布本節點安全檢查必要的
+`/fmu/out/home_position` 與 `/fmu/out/vehicle_land_detected`。只切換
+`px4_msgs release/1.15` 不會讓這兩個 topic 出現，也不能在 ROS 端補救。
+
+本 repo 提供只新增這兩個 publications 的
+`patches/px4-v1.15.4-gps-goto-dds.patch`。在 **未修改、exact tag v1.15.4** 的
+PX4-Autopilot source tree 套用一次：
+
+```bash
+NYCU_REPO=/absolute/path/to/NYCU_UAV_offboard
+PX4_AUTOPILOT=/absolute/path/to/PX4-Autopilot
+
+cd "$PX4_AUTOPILOT"
+git checkout v1.15.4
+git submodule update --init --recursive
+git apply --check "$NYCU_REPO/patches/px4-v1.15.4-gps-goto-dds.patch"
+git apply "$NYCU_REPO/patches/px4-v1.15.4-gps-goto-dds.patch"
+```
+
+若 `git apply --check` 失敗，先用 `git status` 與下列命令確認是否已套用；不要重複套用，
+也不要覆蓋 PX4 tree 中不相關的修改：
+
+```bash
+git apply --reverse --check "$NYCU_REPO/patches/px4-v1.15.4-gps-goto-dds.patch"
+```
+
+針對 Holybro Pixhawk 6C Mini 建置 custom firmware：
+
+```bash
+cd "$PX4_AUTOPILOT"
+make px4_fmu-v6c_default
+```
+
+產物為
+`build/px4_fmu-v6c_default/px4_fmu-v6c_default.px4`。備份參數後再以 QGroundControl
+刷入這份 custom firmware；QGroundControl 下載的 stock v1.15.4 不包含上述兩個 topic。
+這個 patch 沒有修改任何 uORB message definition，因此 ROS 端仍使用原始的
+`px4_msgs release/1.15`，不要把 PX4 `msg/` 複製成另一套自訂介面。
 
 ## 3. 設定 Pixhawk TELEM2
 
@@ -91,19 +140,25 @@ PX4 firmware 與 `px4_msgs` 的 message definitions 必須相符。不要將 PX4
 | `UXRCE_DDS_CFG` | `TELEM 2` | 在 TELEM2 啟動 uXRCE-DDS client。 |
 | `SER_TEL2_BAUD` | `921600` | 必須和 Agent 的 `-b` 完全相同；若硬體鏈路無法穩定支援，可降低，但兩端要一起修改。 |
 | `UXRCE_DDS_DOM_ID` | `0` | 必須和 ROS 2 的 `ROS_DOMAIN_ID` 相同。 |
-| `UXRCE_DDS_NS_IDX` | `-1` | 使用未加 namespace 的 `/fmu/in/*`、`/fmu/out/*` topics；若改成其他值，本專案 topic 名稱也必須一起調整。 |
 
-在 PX4 v1.17 的 QGroundControl **MAVLink Console**，前三項也可直接設定為：
+PX4 v1.15.4 沒有 `UXRCE_DDS_NS_IDX` 參數，預設即使用未加額外 namespace 的
+`/fmu/in/*` 與 `/fmu/out/*`。不要以 `uxrce_dds_client -n` 啟動自訂 namespace，
+否則本專案的固定 topic 名稱不會相符。
+
+在 PX4 v1.15.4 的 QGroundControl **MAVLink Console**，也可直接設定為：
 
 ```sh
 param set MAV_1_CONFIG 0
 param set UXRCE_DDS_CFG 102
 param set SER_TEL2_BAUD 921600
+param set UXRCE_DDS_DOM_ID 0
 param save
 reboot
 ```
 
-其中 `0` 代表停用該 MAVLink instance，`102` 代表 `TELEM 2`。若不是 PX4 v1.17，應先在該版本的 Parameters 頁面確認 enum 對應值，不要直接沿用數字。
+其中 `0` 代表停用該 MAVLink instance，`102` 代表 `TELEM 2`。這些數值已針對
+PX4 v1.15.4 核對；若不是此版本，應先在該版本的 Parameters 頁面確認 enum，
+不要直接沿用數字。
 
 儲存後重新開機 Pixhawk。再次確認 TELEM2 沒有其他 MAVLink instance 或 serial driver 佔用。
 
@@ -132,6 +187,10 @@ MicroXRCEAgent --version
 MicroXRCEAgent --help
 ```
 
+這裡保留 v2.4.3 是因為部署環境為 ROS 2 Jazzy / Fast DDS 2.14。PX4 v1.15 的歷史文件
+在 Humble baseline 使用 v2.4.2；兩者都屬 client 所需的 2.x 世代。不要改用未相容建置的
+3.x Agent。
+
 ## 5. 準備 ROS 2 workspace 與 `px4_msgs`
 
 本專案與 `px4_msgs` 應位於同一個 colcon workspace 的 `src/` 下。以下用 `NYCU_ROS_WS` 表示實際 workspace，請先改成自己的絕對路徑：
@@ -139,7 +198,7 @@ MicroXRCEAgent --help
 ```bash
 NYCU_ROS_WS=/absolute/path/to/nycu_ros_ws
 cd "$NYCU_ROS_WS/src"
-git clone --branch release/1.17 https://github.com/PX4/px4_msgs.git
+git clone --branch release/1.15 https://github.com/PX4/px4_msgs.git
 ```
 
 將本 repo 放在同一個 `src/` 目錄後建置：
@@ -159,7 +218,37 @@ cd "$NYCU_ROS_WS/src/px4_msgs"
 git branch --show-current
 ```
 
-輸出應為 `release/1.17`。
+輸出應為 `release/1.15`。若不是，先確認 `git status --short` 沒有團隊尚未保存的修改，
+再切換；有修改時先停止並妥善保留，不要強制 checkout：
+
+```bash
+cd "$NYCU_ROS_WS/src/px4_msgs"
+git status --short
+git fetch origin
+git switch release/1.15
+git pull --ff-only
+```
+
+如果本機尚未建立該 branch，將 `git switch` 那一行改為：
+
+```bash
+git switch --track origin/release/1.15
+```
+
+若是從較新 message schema 切換，請在未 source 舊 workspace overlay 的新
+terminal 重新建置，並至少加上 `--cmake-clean-cache`，避免誤用先前生成的 header：
+
+```bash
+source /opt/ros/jazzy/setup.bash
+cd "$NYCU_ROS_WS"
+colcon build --packages-up-to my_offboard_cpp --cmake-clean-cache
+source install/setup.bash
+colcon test --packages-select my_offboard_cpp
+colcon test-result --verbose
+```
+
+本 repo 的 `dependencies.repos` 也固定到 `release/1.15`；全新 workspace 可安裝
+`python3-vcstool` 後用 `vcs import src < src/NYCU_UAV_offboard/dependencies.repos` 匯入。
 
 ## 6. 啟動 Pixhawk DDS 連線
 
@@ -182,7 +271,10 @@ ros2 topic list | grep '^/fmu/'
 ros2 topic echo /fmu/out/vehicle_status px4_msgs/msg/VehicleStatus --qos-reliability best_effort --once
 ros2 topic echo /fmu/out/vehicle_global_position px4_msgs/msg/VehicleGlobalPosition --qos-reliability best_effort --once
 ros2 topic echo /fmu/out/vehicle_gps_position px4_msgs/msg/SensorGps --qos-reliability best_effort --once
-ros2 topic echo /fmu/out/home_position px4_msgs/msg/HomePosition --qos-reliability best_effort --once
+ros2 topic echo /fmu/out/home_position px4_msgs/msg/HomePosition \
+  --qos-reliability best_effort --qos-durability transient_local --once
+ros2 topic echo /fmu/out/vehicle_land_detected px4_msgs/msg/VehicleLandDetected \
+  --qos-reliability best_effort --once
 ```
 
 `global_goto_node` 需要以下 PX4 topics；啟動後可用 `ros2 topic list` 逐一確認：
@@ -207,7 +299,12 @@ ros2 topic echo /fmu/out/home_position px4_msgs/msg/HomePosition --qos-reliabili
 4. `MAV_1_CONFIG` 是否已停用，`UXRCE_DDS_CFG` 是否為 TELEM2。
 5. Pixhawk 是否已在參數修改後重新開機。
 6. `ROS_DOMAIN_ID` 與 `UXRCE_DDS_DOM_ID` 是否相同。
-7. `px4_msgs` 是否為 `release/1.17`。
+7. `px4_msgs` 是否為 `release/1.15`。
+8. Pixhawk 是否確實刷入已套用本 repo patch 的 custom v1.15.4 firmware，而不是 stock firmware。
+
+`home_position` 要等 PX4 建立有效 Home 後才可能第一次出現；`vehicle_land_detected`
+通常會先出現。若其他 PX4 topics 正常、唯獨缺少這兩個，優先懷疑刷入了 stock
+v1.15.4 或套 patch 後沒有重新建置／刷寫。
 
 ## 7. 啟動 GPS GOTO 節點
 
@@ -251,6 +348,7 @@ launch 公開的 global node 參數如下：
 | Launch / ROS 參數 | 預設值 | 用途 |
 |---|---:|---|
 | `telemetry_timeout_s` | `1.0` | PX4 狀態、GPS 等必要 telemetry 的最長允許資料年齡。 |
+| `land_detected_timeout_s` | `2.5` | PX4 v1.15 的 land detector 約每秒發布一次；使用獨立容許時間避免排程抖動造成間歇性 stale。 |
 | `gps_min_fix_type` | `3` | 至少需要 3D fix。 |
 | `gps_min_satellites` | `8` | 最少使用衛星數。 |
 | `gps_max_horizontal_accuracy_m` | `5.0` | GPS 最大允許水平誤差。 |
@@ -306,7 +404,16 @@ python3 tools/send_lr24_command.py --port "$GROUND_LR24_SERIAL" STATUS
 
 只有狀態顯示 Pixhawk topics 新鮮、home/global position 有效、飛機已 arm 並離地時，才可接受 GOTO。
 
-`ready_for_goto=true` 還代表：目前是固定翼且不在 VTOL transition、RC/manual control link 未失效、沒有 battery/geofence/navigator/wind/critical failure、fused position 不是 dead reckoning、GPS fix/衛星數與 raw/fused eph/epv 都符合 launch 門檻。任一項不符時，新 GOTO 會被拒絕。這個檢查只會拒絕命令，不能取代飛手與 PX4 failsafe。
+`ready_for_goto=true` 還代表：目前是固定翼且不在 VTOL transition、RC/manual control link
+未失效、沒有 battery/geofence/mission/wind/critical failure、PX4 未回報 active/deferred
+failsafe、fused position 不是 dead reckoning、GPS fix/衛星數與 raw/fused eph/epv 都符合
+launch 門檻。任一項不符時，新 GOTO 會被拒絕。這個檢查只會拒絕命令，不能取代飛手與
+PX4 failsafe。
+
+`px4_msgs release/1.15` 的 `SensorGps` 尚未提供較新版的 receiver `system_error` 與
+GNSS `authentication_state`，因此本節點無法執行這兩項 gate；必須另外依 GNSS 接收器、
+QGroundControl 與 ULog 監看。v1.15 可提供的 jamming `WARNING/CRITICAL` 及 spoofing
+`INDICATED/MULTIPLE` 都會被本節點拒絕。
 
 ### 相對 Home 高度 GOTO
 
@@ -392,13 +499,14 @@ GOTO 是交給 PX4 執行的一次性 reposition command，不是從地面持續
 
 ## 9. 固定翼 SITL 必須先通過
 
-### 9.1 啟動 PX4 v1.17 Cessna SITL
+### 9.1 啟動已套 patch 的 PX4 v1.15.4 Cessna SITL
 
 在 PX4 terminal：
 
 ```bash
 cd /absolute/path/to/PX4-Autopilot
-git checkout v1.17.0
+# 此 source tree 必須已依 2.1 節 checkout v1.15.4 並套用 DDS patch
+git describe --tags --always
 make px4_sitl gz_rc_cessna
 ```
 
@@ -464,9 +572,10 @@ python3 tools/send_lr24_command.py --port /tmp/nycu_lr24_ground STATUS
 
 ## 參考資料
 
-- [PX4 v1.17 uXRCE-DDS](https://docs.px4.io/v1.17/en/middleware/uxrce_dds)
-- [PX4 ROS 2 User Guide](https://docs.px4.io/main/en/ros/ros2_comm)
-- [PX4 v1.17 Gazebo Simulation](https://docs.px4.io/v1.17/en/sim_gazebo_gz/)
-- [PX4 Offboard Mode and failsafe](https://docs.px4.io/v1.17/en/flight_modes/offboard)
-- [PX4 Fixed-Wing Hold Mode](https://docs.px4.io/v1.17/en/flight_modes_fw/hold)
+- [PX4 v1.15 uXRCE-DDS](https://docs.px4.io/v1.15/en/middleware/uxrce_dds)
+- [PX4 v1.15 ROS 2 User Guide](https://docs.px4.io/v1.15/en/ros2/user_guide)
+- [PX4 v1.15 Gazebo Simulation](https://docs.px4.io/v1.15/en/sim_gazebo_gz/)
+- [PX4 v1.15 Offboard Mode and failsafe](https://docs.px4.io/v1.15/en/flight_modes/offboard)
+- [PX4 v1.15 Fixed-Wing Hold Mode](https://docs.px4.io/v1.15/en/flight_modes_fw/hold)
+- [PX4 v1.15 firmware build targets](https://docs.px4.io/v1.15/en/dev_setup/building_px4)
 - [Holybro Pixhawk 6C Mini port pinout](https://docs.holybro.com/autopilot/pixhawk-6c-mini/pixhawk-6c-mini-ports)

@@ -14,6 +14,7 @@ def generate_launch_description():
 
     float_parameters = {
         "telemetry_timeout_s": "1.0",
+        "land_detected_timeout_s": "2.5",
         "gps_max_horizontal_accuracy_m": "5.0",
         "gps_max_vertical_accuracy_m": "8.0",
         "max_target_distance_m": "2000.0",

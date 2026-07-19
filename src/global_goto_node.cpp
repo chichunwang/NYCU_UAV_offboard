@@ -55,6 +55,8 @@ public:
     : Node("global_goto_node")
     {
         telemetry_timeout_s_ = this->declare_parameter<double>("telemetry_timeout_s", 1.0);
+        land_detected_timeout_s_ =
+            this->declare_parameter<double>("land_detected_timeout_s", 2.5);
         gps_min_fix_type_ = this->declare_parameter<int>("gps_min_fix_type", 3);
         gps_min_satellites_ = this->declare_parameter<int>("gps_min_satellites", 8);
         gps_max_horizontal_accuracy_m_ =
@@ -94,6 +96,8 @@ public:
         rclcpp::SubscriptionOptions subscription_options;
         subscription_options.callback_group = callback_group_;
         const auto sensor_qos = rclcpp::SensorDataQoS();
+        const auto retained_sensor_qos =
+            rclcpp::QoS(rclcpp::KeepLast(1)).best_effort().transient_local();
 
         global_position_sub_ = this->create_subscription<VehicleGlobalPosition>(
             "/fmu/out/vehicle_global_position",
@@ -113,7 +117,7 @@ public:
 
         home_position_sub_ = this->create_subscription<HomePosition>(
             "/fmu/out/home_position",
-            sensor_qos,
+            retained_sensor_qos,
             [this](const HomePosition::SharedPtr msg) {
                 store_telemetry(home_position_, *msg);
             },
@@ -281,6 +285,7 @@ private:
     };
 
     double telemetry_timeout_s_{1.0};
+    double land_detected_timeout_s_{2.5};
     int gps_min_fix_type_{3};
     int gps_min_satellites_{8};
     double gps_max_horizontal_accuracy_m_{5.0};
@@ -344,6 +349,7 @@ private:
             };
 
         require_positive(telemetry_timeout_s_, "telemetry_timeout_s");
+        require_positive(land_detected_timeout_s_, "land_detected_timeout_s");
         require_positive(gps_max_horizontal_accuracy_m_, "gps_max_horizontal_accuracy_m");
         require_positive(gps_max_vertical_accuracy_m_, "gps_max_vertical_accuracy_m");
         require_positive(max_target_distance_m_, "max_target_distance_m");
@@ -427,7 +433,8 @@ private:
         const TimedTelemetry<MessageT> & telemetry,
         const char * name,
         const SteadyTime now,
-        std::string & error) const
+        std::string & error,
+        const double timeout_s = -1.0) const
     {
         if (!telemetry.received) {
             error = std::string("Missing telemetry: ") + name;
@@ -436,7 +443,8 @@ private:
 
         const double age_s =
             std::chrono::duration<double>(now - telemetry.received_at).count();
-        if (age_s > telemetry_timeout_s_) {
+        const double effective_timeout_s = timeout_s > 0.0 ? timeout_s : telemetry_timeout_s_;
+        if (age_s > effective_timeout_s) {
             std::ostringstream stream;
             stream << "Stale telemetry: " << name << " age=" << std::fixed
                    << std::setprecision(2) << age_s << "s";
@@ -468,7 +476,7 @@ private:
         {
             return "Local position, velocity, or altitude estimate is invalid";
         }
-        if (flags.global_position_invalid || flags.global_position_invalid_relaxed) {
+        if (flags.global_position_invalid) {
             return "Global position estimate is invalid";
         }
         if (flags.home_position_invalid) {
@@ -485,8 +493,8 @@ private:
         if (flags.geofence_breached) {
             return "Geofence is currently breached";
         }
-        if (flags.mission_failure || flags.navigator_failure) {
-            return "Navigator or mission failure is active";
+        if (flags.mission_failure) {
+            return "Mission failure is active";
         }
         if (flags.vtol_fixed_wing_system_failure) {
             return "VTOL fixed-wing system failure is active";
@@ -494,8 +502,8 @@ private:
         if (flags.wind_limit_exceeded || flags.flight_time_limit_exceeded) {
             return "Wind or flight-time limit is exceeded";
         }
-        if (flags.position_accuracy_low) {
-            return "PX4 reports low position accuracy";
+        if (flags.local_position_accuracy_low) {
+            return "PX4 reports low local-position accuracy";
         }
         if (flags.fd_critical_failure || flags.fd_esc_arming_failure ||
             flags.fd_imbalanced_prop || flags.fd_motor_failure)
@@ -510,7 +518,12 @@ private:
         if (!require_fresh_locked(global_position_, "vehicle_global_position", now, error) ||
             !require_fresh_locked(gps_, "vehicle_gps_position", now, error) ||
             !require_fresh_locked(vehicle_status_, "vehicle_status", now, error) ||
-            !require_fresh_locked(land_detected_, "vehicle_land_detected", now, error) ||
+            !require_fresh_locked(
+                land_detected_,
+                "vehicle_land_detected",
+                now,
+                error,
+                land_detected_timeout_s_) ||
             !require_fresh_locked(failsafe_flags_, "failsafe_flags", now, error))
         {
             return false;
@@ -564,9 +577,12 @@ private:
             return false;
         }
 
-        if (!global.lat_lon_valid || !global.alt_valid || global.dead_reckoning ||
-            !valid_latitude(global.lat) || !valid_longitude(global.lon) ||
-            !std::isfinite(global.alt))
+        // PX4 v1.15 VehicleGlobalPosition does not expose the lat_lon_valid or
+        // alt_valid fields added by later message schemas. FailsafeFlags above is
+        // the v1.15 validity source; retain finite/range and dead-reckoning checks
+        // here as an independent structural guard.
+        if (global.dead_reckoning || !valid_latitude(global.lat) ||
+            !valid_longitude(global.lon) || !std::isfinite(global.alt))
         {
             error = "Fused global position is invalid or dead-reckoned";
             return false;
@@ -597,20 +613,19 @@ private:
             error = stream.str();
             return false;
         }
-        if (gps.system_error != SensorGps::SYSTEM_ERROR_OK) {
-            error = "GPS receiver reports a system error";
+        // PX4 v1.15 SensorGps uses WARNING/CRITICAL and
+        // INDICATED/MULTIPLE enums. It does not yet expose system_error or
+        // authentication_state, so those later-schema checks cannot be made.
+        if (gps.jamming_state == SensorGps::JAMMING_STATE_WARNING ||
+            gps.jamming_state == SensorGps::JAMMING_STATE_CRITICAL)
+        {
+            error = "GPS jamming warning or critical state is active";
             return false;
         }
-        if (gps.jamming_state == SensorGps::JAMMING_STATE_DETECTED) {
-            error = "GPS jamming is detected";
-            return false;
-        }
-        if (gps.spoofing_state == SensorGps::SPOOFING_STATE_DETECTED) {
+        if (gps.spoofing_state == SensorGps::SPOOFING_STATE_INDICATED ||
+            gps.spoofing_state == SensorGps::SPOOFING_STATE_MULTIPLE)
+        {
             error = "GPS spoofing is detected";
-            return false;
-        }
-        if (gps.authentication_state == SensorGps::AUTHENTICATION_STATE_ERROR) {
-            error = "GPS signal authentication reports an error";
             return false;
         }
 
@@ -948,8 +963,11 @@ private:
                    << active_target_->altitude_relative_home_m
                    << ";target_distance_from_home_m=" << active_target_->home_distance_m;
 
-            if (global_position_.received && global_position_.message.lat_lon_valid &&
-                global_position_.message.alt_valid)
+            if (global_position_.received &&
+                !global_position_.message.dead_reckoning &&
+                valid_latitude(global_position_.message.lat) &&
+                valid_longitude(global_position_.message.lon) &&
+                std::isfinite(global_position_.message.alt))
             {
                 stream << ";distance_to_target_m="
                        << great_circle_distance_m(

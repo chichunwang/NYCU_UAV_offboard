@@ -4,6 +4,9 @@
 
 若目標是從地面端輸入 GPS 座標，讓 RPi / Jetson Orin 經 Pixhawk 導引固定翼飛往該位置，請改用 [LR24 GPS GOTO 與 Pixhawk 連線操作指南](gps_goto_program.md)。新流程為：
 
+GPS GOTO 目前固定使用 `px4_msgs release/1.15` 與已套用專案 DDS patch 的
+PX4 v1.15.4；stock firmware 不含這個流程必要的全部 DDS topics。
+
 如果還不清楚地面筆電的 LR24 要插在哪裡、如何找 Windows COM port，以及實際要輸入哪些命令，請直接從 [LR24-F 地面站控制完整教學](lr24_ground_station_tutorial.md) 開始。
 
 ```text

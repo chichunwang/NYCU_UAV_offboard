@@ -4,6 +4,10 @@
 
 如果 Pixhawk TELEM2、ROS 2、Micro XRCE-DDS Agent 尚未安裝完成，先依照 [LR24 GPS GOTO 與 Pixhawk 連線操作指南](gps_goto_program.md) 完成空中端設定。
 
+本流程固定使用 `px4_msgs release/1.15` 與已套用專案 DDS patch 的 PX4 v1.15.4；
+stock v1.15.4 缺少必要的 Home／land-detected DDS topics，不能略過連線指南中的
+custom firmware 步驟。
+
 > 首次測試一律拆槳。完成 SITL、桌面通訊、PX4 geofence、failsafe 與獨立 RC/ELRS 接管驗證前，不可實飛。
 
 ## 1. 先弄清楚：指令在哪裡輸入
