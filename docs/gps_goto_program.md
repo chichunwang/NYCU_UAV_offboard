@@ -138,6 +138,7 @@ MicroXRCEAgent --help
 
 ```bash
 NYCU_ROS_WS=/absolute/path/to/nycu_ros_ws
+NYCU_ROS_WS=/home/pi/NYCU_ROS_WS
 cd "$NYCU_ROS_WS/src"
 git clone --branch release/1.17 https://github.com/PX4/px4_msgs.git
 ```
@@ -179,7 +180,7 @@ source /opt/ros/jazzy/setup.bash
 source "$NYCU_ROS_WS/install/setup.bash"
 
 ros2 topic list | grep '^/fmu/'
-ros2 topic echo /fmu/out/vehicle_status px4_msgs/msg/VehicleStatus --qos-reliability best_effort --once
+ros2 topic echo /fmu/out/vehicle_status_v1 px4_msgs/msg/VehicleStatus --qos-reliability best_effort --once
 ros2 topic echo /fmu/out/vehicle_global_position px4_msgs/msg/VehicleGlobalPosition --qos-reliability best_effort --once
 ros2 topic echo /fmu/out/vehicle_gps_position px4_msgs/msg/SensorGps --qos-reliability best_effort --once
 ros2 topic echo /fmu/out/home_position px4_msgs/msg/HomePosition --qos-reliability best_effort --once
