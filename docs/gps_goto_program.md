@@ -180,11 +180,13 @@ source /opt/ros/jazzy/setup.bash
 source "$NYCU_ROS_WS/install/setup.bash"
 
 ros2 topic list | grep '^/fmu/'
-ros2 topic echo /fmu/out/vehicle_status_v1 px4_msgs/msg/VehicleStatus --qos-reliability best_effort --once
+ros2 topic echo /fmu/out/vehicle_status px4_msgs/msg/VehicleStatus --qos-reliability best_effort --once
 ros2 topic echo /fmu/out/vehicle_global_position px4_msgs/msg/VehicleGlobalPosition --qos-reliability best_effort --once
 ros2 topic echo /fmu/out/vehicle_gps_position px4_msgs/msg/SensorGps --qos-reliability best_effort --once
 ros2 topic echo /fmu/out/home_position px4_msgs/msg/HomePosition --qos-reliability best_effort --once
 ```
+
+> **PX4 版本綁定注意：** PX4 v1.17.0 官方 `dds_topics.yaml` 的所有 topic 都**沒有** `_v1` 後綴，本專案節點也訂閱無後綴名稱。若 `ros2 topic list` 出現 `/fmu/out/vehicle_status_v1` 等名稱，代表該韌體是 PX4 main／較新版本（已導入 message versioning），節點會**靜默收不到任何資料**；請改用 v1.17.x 韌體，或同步修改程式碼的 topic 名稱並重新驗證。
 
 `global_goto_node` 需要以下 PX4 topics；啟動後可用 `ros2 topic list` 逐一確認：
 
