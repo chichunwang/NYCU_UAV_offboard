@@ -30,6 +30,16 @@ send_lr24_command.py
 3. 本專案的 `tools/send_lr24_command.py`。
 4. 一顆已配對的 LR24-F。
 
+如果想用按鈕操作，可在地面端改為啟動圖形介面：
+
+```powershell
+py .\tools\send_lr24_command_ui.py
+```
+
+介面可自動掃描 COM / serial port，提供 PING、STATUS、GOTO、GOTO_AMSL、RTL 等按鈕，並在通訊紀錄中顯示送出的 checksummed frame 與 ACK／ERR。飛航相關按鈕送出前會再次確認；其封包格式、8 秒 timeout 與安全限制和本文件下方的命令列工具相同。
+
+Windows 官方 Python 通常已包含 Tkinter；若 Ubuntu 顯示 Tkinter unavailable，先執行 `sudo apt install python3-tk`。
+
 QGroundControl 可以另外用來看地圖、模式與遙測，但它不是這條 LR24 指令鏈的一部分，也不能占用 LR24 的 COM / serial port。若要讓 QGC 顯示實際飛機狀態，必須另外準備一條已設定好的 MAVLink 路徑，例如另一個 Pixhawk telemetry port／遙測電台、Pixhawk USB，或網路 MAVLink。供 uXRCE-DDS 使用的 TELEM2 與這顆傳送自訂文字指令的 LR24 都不能同時拿給 QGC 使用。
 
 ## 2. 完整資料路徑
