@@ -10,7 +10,7 @@
 
 目前的地面控制介面不是 QGroundControl 按鈕，也不是搖桿。你要在地面筆電的 **PowerShell 或 Terminal** 執行：
 
-```text
+```text``
 send_lr24_command.py
 ```
 

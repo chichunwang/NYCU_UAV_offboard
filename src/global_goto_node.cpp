@@ -112,7 +112,7 @@ public:
             subscription_options);
 
         home_position_sub_ = this->create_subscription<HomePosition>(
-            "/fmu/out/home_position",
+            "/fmu/out/home_position_v1",
             sensor_qos,
             [this](const HomePosition::SharedPtr msg) {
                 store_telemetry(home_position_, *msg);
@@ -120,7 +120,7 @@ public:
             subscription_options);
 
         vehicle_status_sub_ = this->create_subscription<VehicleStatus>(
-            "/fmu/out/vehicle_status",
+            "/fmu/out/vehicle_status_v1",
             sensor_qos,
             [this](const VehicleStatus::SharedPtr msg) {
                 store_telemetry(vehicle_status_, *msg);
