@@ -40,6 +40,79 @@ py .\tools\send_lr24_command_ui.py
 
 Windows 官方 Python 通常已包含 Tkinter；若 Ubuntu 顯示 Tkinter unavailable，先執行 `sudo apt install python3-tk`。
 
+### 1.1 操作員指令速查
+
+UI 會顯示所有 LR24 指令，但指令是否可用取決於空中端啟動的流程：
+
+- **GPS GOTO 主流程**：空中端使用 `serial_gps_goto.launch.py`，主要操作是 `PING`、`STATUS`、`GOTO`、`GOTO_AMSL`、`RTL`。
+- **ELRS／Offboard 範例流程**：空中端使用 `serial_elrs_offboard.launch.py`，主要操作是 `ENABLE_STREAM`、`START_MISSION`、`START_OFFBOARD`、`STOP_OFFBOARD`、`LAND`。
+
+如果按下不屬於目前流程的按鈕，通常會收到 `ERR ... ROS service not available`。UI 不會自動判斷空中端啟動了哪一種 launch。
+
+| 指令／UI 按鈕 | 參數 | 適用流程 | 用途與操作注意事項 |
+|---|---|---|---|
+| `PING` | 無 | 兩者皆可 | 測試地面端到空中端的雙向 LR24 通訊；正常回覆為 `ACK ... PONG`。每次操作都應先測試它。 |
+| `HELP` | 無 | 兩者皆可 | 由空中端回傳支援的指令名稱；只代表 `lr24_command_node` 認得名稱，不代表相關 ROS service 已啟動。 |
+| `STATUS` | 無 | 兩者皆可 | 查詢目前流程的狀態。GPS GOTO 流程必須讀取 `ready_for_goto`，不能只看 `ACK`。 |
+| `GOTO` | 緯度、經度、相對 Home 高度（m） | GPS GOTO | 將固定翼送往 GPS 目標並進入盤旋；送出前必須確認 `ready_for_goto=true`。 |
+| `GOTO_AMSL` | 緯度、經度、AMSL 海拔（m） | GPS GOTO | 與 `GOTO` 相同，但高度基準為平均海平面；空中端仍會換算並套用相對 Home 高度限制。 |
+| `RTL` | 無 | GPS GOTO | 要求 PX4 進入 `AUTO_RTL`；實際返航高度、盤旋和是否降落由 PX4 參數決定。 |
+| `ABORT` | 無 | GPS GOTO | 目前是 `RTL` 的別名；不是 Hold、Kill 或立即停止飛機。 |
+| `ENABLE_STREAM` | 無 | ELRS／Offboard | 開始發布 Offboard setpoint，但不切模式、不 arm。 |
+| `START_MISSION` | 無 | ELRS／Offboard | 開始任務軌跡，但不切模式、不 arm。 |
+| `START_OFFBOARD` | 無 | ELRS／Offboard | 啟用 stream 和任務，warmup 後要求 PX4 切入 Offboard 並 arm；只應用於 SITL、拆槳或已驗證 RC 接管的受控環境。 |
+| `STOP_OFFBOARD` | 無 | ELRS／Offboard | 停止發布 Offboard setpoint；飛行中直接使用可能觸發 Offboard loss 行為，應先由 RC 切回安全模式。 |
+| `LAND` | 無 | ELRS／Offboard | 要求 PX4 降落並停止發布 Offboard setpoint；固定翼實飛前必須先驗證 PX4 的降落設定與航線。 |
+
+命令列的一般格式如下；`COM7` 要換成地面端 LR24 的實際 serial port：
+
+```powershell
+py .\tools\send_lr24_command.py --port COM7 <指令> [參數]
+```
+
+常用命令可直接照以下格式輸入：
+
+```powershell
+# 通訊與狀態
+py .\tools\send_lr24_command.py --port COM7 PING
+py .\tools\send_lr24_command.py --port COM7 HELP
+py .\tools\send_lr24_command.py --port COM7 STATUS
+
+# GPS GOTO 主流程
+py .\tools\send_lr24_command.py --port COM7 GOTO LAT_DEG LON_DEG REL_HOME_ALT_M
+py .\tools\send_lr24_command.py --port COM7 GOTO_AMSL LAT_DEG LON_DEG ALT_AMSL_M
+py .\tools\send_lr24_command.py --port COM7 RTL
+
+# ELRS／Offboard 範例流程
+py .\tools\send_lr24_command.py --port COM7 ENABLE_STREAM
+py .\tools\send_lr24_command.py --port COM7 START_MISSION
+py .\tools\send_lr24_command.py --port COM7 START_OFFBOARD
+py .\tools\send_lr24_command.py --port COM7 STOP_OFFBOARD
+py .\tools\send_lr24_command.py --port COM7 LAND
+```
+
+`LAT_DEG`、`LON_DEG` 和高度欄位必須換成實際數值；目標必須位於已驗證的 geofence 內，並符合空中端設定的距離與高度限制。
+
+### 1.2 UI 操作順序
+
+1. 接好地面端 LR24 天線和 USB，關閉其他會占用同一個 COM port 的程式。
+2. 執行 `py .\tools\send_lr24_command_ui.py`。
+3. 按「重新掃描」，選擇地面端 LR24 的 serial port；Baud 必須與兩顆 LR24 和空中端程式一致，Timeout 一般保持 `8.0` 秒。
+4. 按 `PING`，確認通訊紀錄出現 `< $ACK,...,PING,PONG...`。
+5. 按 `STATUS`，依目前流程確認狀態；GPS GOTO 操作必須明確看到 `ready_for_goto=true`。
+6. 若要送 GPS 目標，依序填入緯度、經度、高度，再根據高度基準選擇 `GOTO` 或 `GOTO_AMSL`。
+7. 核對確認視窗中的 port、指令與參數後才送出；收到 `ACK` 只代表指令已接受，仍要持續監看 QGC、RC 狀態和飛機實際動作。
+8. 若收到 `ERR`，先依訊息修正狀態；若 timeout，不可假設指令未執行，也不要直接重送飛航指令，應依第 9 節處理。
+
+### 1.3 通訊紀錄判讀
+
+| 顯示 | 意義 | 操作員處置 |
+|---|---|---|
+| `> $CMD,...` | 地面程式已將封包寫入 serial port | 等待相同 sequence 的回覆。 |
+| `< $ACK,...` | 空中端接受指令，或對應 ROS service 回報成功 | 繼續確認回覆內容與飛機實際狀態；`STATUS ACK` 不等於 `ready_for_goto=true`。 |
+| `< $ERR,...` | 空中端拒絕指令或 service 執行失敗 | 讀取最後面的原因，修正後先重新查詢 `STATUS`。 |
+| `No matching...`／UI 顯示逾時 | 期限內沒有收到相同 sequence 的 ACK/ERR | 對飛航指令視為「結果未知」；不要直接重送，改用 QGC／RC 確認並依第 9 節處理。 |
+
 QGroundControl 可以另外用來看地圖、模式與遙測，但它不是這條 LR24 指令鏈的一部分，也不能占用 LR24 的 COM / serial port。若要讓 QGC 顯示實際飛機狀態，必須另外準備一條已設定好的 MAVLink 路徑，例如另一個 Pixhawk telemetry port／遙測電台、Pixhawk USB，或網路 MAVLink。供 uXRCE-DDS 使用的 TELEM2 與這顆傳送自訂文字指令的 LR24 都不能同時拿給 QGC 使用。
 
 ## 2. 完整資料路徑
