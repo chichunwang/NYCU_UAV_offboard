@@ -1,478 +1,357 @@
 # NYCU UAV Offboard Control
 
-本專案用於開發固定翼無人機的板外控制（Offboard Control）系統。
+本專案是大型固定翼無人機的 ROS 2 伴飛控制與 LR24-F 地面指令系統。現行主線已從早期的 local-NED Offboard 方形範例，演進為「固定翼單點 GPS GOTO」流程：地面端透過 LR24-F 傳送命令，空中端檢查 PX4 遙測與飛行安全條件後，以 `DO_REPOSITION` 要求 PX4 飛向目標並進入 Auto Loiter。
 
-主要目標是讓板外電腦取得飛行器與外部目標的 GPS 座標，透過飛控控制無人機執行繞點飛行與目標追蹤。
+> [!CAUTION]
+> 這是飛航控制研究軟體，不是已完成認證的飛行產品。目前 LR24 雙向鏈路、封包與 Python 測試已有驗證紀錄；Pixhawk uXRCE-DDS 整合、固定翼 SITL GOTO／RTL、systemd 重開機驗收及實機飛行仍待完成。未通過 SITL、拆槳與地面測試前，不得直接實飛。
 
----
+## 目前狀態
 
-## 專案目標
+「已實作」只表示 repository 內已有程式，不等於完成 SITL 或實機驗證。
 
-專案分為兩個主要階段：
+| 功能 | 實作 | 自動測試 | 目前驗證狀態 |
+|---|---|---|---|
+| LR24 透明串列雙向鏈路測試 | 完成 | 無硬體自動測試 | 已完成近距雙向 30/30、0% loss 實測 |
+| XOR checksum、ACK/ERR、sequence 去重 | 完成 | Python 已覆蓋 | `PING`／`HELP` 已通過實機鏈路 |
+| 地面 CLI 與 Tk GUI | 完成 | Python 已覆蓋 | 基本通訊已驗證 |
+| LR24 serial 斷線重連 | 完成 | 靜態檢查 | 待完整拔插與重啟驗收 |
+| 單點 `GOTO`／`GOTO_AMSL` | 完成 | 尚無 C++ 行為測試 | DDS、SITL、實飛待驗證 |
+| `RTL`／`ABORT` | 完成 | 尚無 C++ 行為測試 | SITL、實飛待驗證 |
+| Raspberry Pi systemd 自動啟動 | 完成 | Python 靜態檢查 | 待多次冷開機實機驗收 |
+| Legacy local-NED Offboard 方形範例 | 保留 | 尚無 C++ 行為測試 | 僅供 SITL／拆槳受控測試 |
+| 多航點任務 | 未實作 | — | — |
+| 雲台相機目標追蹤 | 未實作 | — | — |
 
-1. GPS 座標取得與繞點飛行
-2. 根據外部雲台相機提供的目標座標進行追蹤
+實測紀錄與尚未完成項目請以 [LR24-F 快速測試與系統啟動實測手冊](docs/lr24_quick_test_guide.md) 為準。
 
-另外需要建立板外電腦、飛控與地面站之間的通訊方式。
+## 安全邊界
 
----
+現行 GPS GOTO 主線的 `global_goto_node`：
 
-# 系統架構
+- 不會 arm、起飛或降落；飛機必須已由飛手安全起飛、armed 且確認離地。
+- 只接受固定翼狀態，並檢查 GPS、Home、遙測新鮮度、RC、電池與 PX4 failsafe flags。
+- 預設限制目標距目前位置及 Home 均不超過 `2000 m`，相對 Home 高度為 `30–120 m`。
+- 以一次性 `VEHICLE_CMD_DO_REPOSITION` 將目標交給 PX4，不持續串流 Offboard setpoint。
+- `RTL` 要求 PX4 進入 `AUTO_RTL`；`ABORT` 目前是 `RTL` 的別名，不是 Kill、Hold 或立即停止。
+- 節點監控中止只會停止 ROS 端追蹤，不會自動取消 PX4 已接受的 GOTO。LR24、伴飛電腦或 ROS node 失聯時，PX4 可能仍繼續飛向既有目標。
 
-預計系統架構如下：
+目前尚未實作完整目標 geofence polygon、terrain／AGL 檢查、最大速度／轉彎率限制，以及通訊失聯後自動取消目標。實飛時必須保有有效的 RC／ELRS 人工接管方式，並以另一條 MAVLink 路徑讓 QGroundControl 監看飛機；LR24 serial 與 Pixhawk DDS serial 都不能同時被 QGC 占用。
 
-```text
-雲台相機系統
-     │
-     │ 目標 GPS 座標
-     ▼
-板外電腦（Ubuntu）
-     │
-     │ MAVLink / Offboard Command
-     ▼
-Pixhawk 飛控
-     │
-     ▼
-固定翼無人機
-```
+舊版 `my_offboard_node` 不具備上述 GPS GOTO safety gate，且 `START_OFFBOARD` 會在 warmup 後要求切換 Offboard 並 arm。它只能用於 SITL、拆槳或其他已建立獨立安全措施的環境。
 
-地面端架構：
+## 現行系統架構
 
-```text
-地面站電腦
-     │
-     │ LR24-F / Serial / Network
-     ▼
-空中端板外電腦
-     │
-     ▼
-Pixhawk 飛控
-```
-
-## 固定翼單點 GPS GOTO
-
-目前已提供 LR24 低頻指令到 PX4 的固定翼單點導航流程：地面端輸入 `GOTO latitude longitude relative_home_altitude_m`，空中端完成 GPS、Home、飛行狀態、距離與高度檢查後，以 PX4 `DO_REPOSITION` 進入 Auto Loiter，飛抵目標後繞點。
-
-此流程不會自動 arm、起飛或降落，且不使用舊版的本地 NED 方形 Offboard 範例。地面端可執行 `python tools/send_lr24_command_ui.py` 開啟按鈕式控制介面；第一次從地面筆電操作 LR24 請看 [地面站控制完整教學](docs/lr24_ground_station_tutorial.md)。Pixhawk uXRCE-DDS 接線、建置、SITL 與實機工程說明請見 [GPS GOTO 操作指南](docs/gps_goto_program.md)；實機驗證過的最短測試路徑、預期輸出與踩雷排查請看 [LR24-F 快速測試與系統啟動實測手冊](docs/lr24_quick_test_guide.md)。完成手動測試後，可依 [RPi 開機自動啟動 DDS 與 ROS 2 節點](docs/rpi_autostart.md)一次性安裝 systemd 服務。收工關閉伴飛電腦（RPi / Orin）時，請先 SSH 進去 `sudo shutdown -h now` 正常關機、等約 20 秒再斷電，**嚴禁直接拔電源**（SD 卡會壞，詳見實測手冊 §6）。
-
----
-
-# 開發里程碑
-
-## Milestone 1：取得 GPS 座標並完成繞點飛行
-
-第一階段目標是讓板外電腦取得飛行器目前的 GPS 資訊，並控制無人機依序飛向指定座標。
-
-### 開發項目
-
-- [ ] 板外電腦成功連接 Pixhawk
-- [ ] 接收飛行器 GPS 座標
-- [ ] 顯示經度、緯度、高度與時間戳記
-- [ ] 檢查 GPS Fix 狀態與衛星數量
-- [ ] 建立目標航點格式
-- [ ] 發送單一 GPS 航點
-- [ ] 判斷飛行器是否抵達航點
-- [ ] 支援多個航點依序飛行
-- [ ] 完成繞點或封閉路徑飛行
-- [ ] 加入返航與失效保護
-
-### 建議控制流程
+### GPS GOTO 主流程
 
 ```text
-INIT
-  ↓
-等待飛控連線
-  ↓
-等待 GPS 有效
-  ↓
-解鎖與起飛
-  ↓
-飛向航點 1
-  ↓
-抵達判斷
-  ↓
-飛向下一個航點
-  ↓
-完成所有航點
-  ↓
-返航或盤旋
+地面端 Windows / Ubuntu
+  send_lr24_command_ui.py 或 send_lr24_command.py
+                │  $CMD,<seq>,...*<XOR>
+                ▼
+        地面 LR24-F  ⇄  空中 LR24-F
+                           │ 透明 USB Serial
+                           ▼
+                  lr24_command_node
+                    │ ROS 2 services
+          ┌─────────┼──────────────────┐
+          │         │                  │
+     /goto_global   /gps_goto_status   /return_to_launch
+          └─────────┼──────────────────┘
+                    ▼
+               global_goto_node
+            │ DO_REPOSITION / RTL
+            │ /fmu/in/vehicle_command
+            ▼
+       Micro XRCE-DDS Agent
+            │ 獨立 Pixhawk Serial
+            ▼
+       Pixhawk / PX4 fixed-wing
+            │ /fmu/out/* telemetry
+            └──────────────────────────► global_goto_node safety gate
 ```
 
-### 航點資料格式
+主線 launch 為 `serial_gps_goto.launch.py`，只啟動 `global_goto_node` 與 `lr24_command_node`。兩個 node 發生異常時會在 3 秒後 respawn，但目前狀態與 sequence cache 只存於記憶體；node 重啟後不可假設舊 GOTO 已取消或舊 sequence 仍可安全去重。
 
-建議統一使用以下格式：
+### Legacy local-NED Offboard 流程
 
-```cpp
-struct Waypoint {
-    double latitude_deg;
-    double longitude_deg;
-    float altitude_m;
-};
-```
+`serial_elrs_offboard.launch.py` 會啟動 `my_offboard_node` 與 `lr24_command_node`，以 10 Hz 發布本地 NED setpoint，執行 5 m 高的方形軌跡。這不是現行固定翼 GPS GOTO 主線。
 
-### 第一階段驗收條件
-
-- 可以穩定取得飛行器 GPS 座標
-- 可以載入至少三個航點
-- 飛行器能依序飛向各航點
-- 能判斷是否抵達航點
-- GPS 或通訊中斷時不會持續送出危險指令
-- 能執行返航、盤旋或其他安全模式
-
----
-
-## Milestone 2：根據雲台相機座標追蹤目標
-
-第二階段由另一組的雲台相機系統提供目標座標，板外電腦接收座標後，控制飛行器朝向目標位置飛行。
-
-### 外部輸入資料
-
-雲台相機組至少需要提供：
-
-```text
-target_id
-latitude
-longitude
-altitude
-timestamp
-valid
-```
-
-建議資料格式：
-
-```cpp
-struct TargetPosition {
-    int target_id;
-    double latitude_deg;
-    double longitude_deg;
-    float altitude_m;
-    uint64_t timestamp_ms;
-    bool valid;
-};
-```
-
-### 開發項目
-
-- [ ] 定義雲台相機組與飛控組之間的資料格式
-- [ ] 接收目標 GPS 座標
-- [ ] 檢查座標是否合法
-- [ ] 檢查資料是否逾時
-- [ ] 對目標座標進行濾波
-- [ ] 將目標座標轉換為飛行控制目標
-- [ ] 控制飛行器朝向目標飛行
-- [ ] 限制最大速度、轉彎率與高度範圍
-- [ ] 目標移動時持續更新追蹤點
-- [ ] 目標消失時進入安全模式
-
-### 建議追蹤狀態機
-
-```text
-WAIT_TARGET
-     ↓
-收到有效目標
-     ↓
-TRACK_TARGET
-     ↓
-持續更新目標位置
-     ↓
-資料逾時或目標遺失
-     ↓
-HOLD / LOITER
-     ↓
-重新取得目標或返航
-```
-
-### 第二階段驗收條件
-
-- 可以穩定接收另一組傳送的目標座標
-- 能辨識過期或無效的目標資料
-- 目標移動時可以持續更新飛行方向
-- 目標資料中斷時會停止追蹤
-- 不會因單次錯誤座標產生劇烈控制指令
-- 追蹤功能可隨時由地面站中止
-
----
-
-# 地面站通訊
-
-目前的小項目是建立空中端與地面站之間的通訊。
-
-可能使用的通訊方式：
-
-- USB Serial
-- LR24-F 透明串列通訊
-- MAVLink
-- UDP 或 TCP
-- PPP 網路連線
-- SSH 遠端操作
-
-初期建議先使用純 Serial 驗證資料傳輸，再逐步加入封包格式、錯誤檢查與網路協定。
-
-## 通訊開發順序
-
-```text
-純 Serial 雙向傳輸
-        ↓
-定義封包格式
-        ↓
-加入封包起始碼與長度
-        ↓
-加入 CRC 錯誤檢查
-        ↓
-加入序號與時間戳記
-        ↓
-傳送 GPS、狀態與控制命令
-        ↓
-視需求導入 MAVLink 或網路連線
-```
-
-## 建議訊息類型
-
-```text
-HEARTBEAT
-GPS_POSITION
-TARGET_POSITION
-AIRCRAFT_STATUS
-MISSION_COMMAND
-MISSION_STATUS
-ABORT_COMMAND
-```
-
-通訊封包至少應包含：
-
-```text
-message_type
-sequence_number
-payload_length
-timestamp
-payload
-checksum
-```
-
----
-
-# 建議程式架構
+## Repository 結構
 
 ```text
 NYCU_UAV_offboard/
-├── README.md
-├── .gitignore
 ├── CMakeLists.txt
 ├── package.xml
-├── include/
-│   └── my_offboard_cpp/
-│       ├── communication.hpp
-│       ├── navigation.hpp
-│       ├── waypoint_manager.hpp
-│       ├── target_tracker.hpp
-│       └── safety_manager.hpp
+├── README.md
+├── lr24_link_test.py
 ├── src/
-│   ├── main.cpp
-│   ├── communication.cpp
-│   ├── navigation.cpp
-│   ├── waypoint_manager.cpp
-│   ├── target_tracker.cpp
-│   └── safety_manager.cpp
-├── config/
-│   ├── vehicle.yaml
-│   └── communication.yaml
+│   ├── global_goto_node.cpp       # 固定翼 GPS GOTO、RTL、安全檢查與狀態監控
+│   ├── lr24_command_node.cpp      # 空中端 LR24 serial ↔ ROS service bridge
+│   └── my_offboard_node.cpp       # Legacy local-NED Offboard 範例
+├── srv/
+│   └── GotoGlobal.srv             # GPS 目標與高度基準介面
 ├── launch/
+│   ├── serial_gps_goto.launch.py  # 現行主線
+│   └── serial_elrs_offboard.launch.py
+├── tools/
+│   ├── send_lr24_command.py       # 地面站 CLI
+│   └── send_lr24_command_ui.py    # 地面站 Tk GUI
+├── deploy/rpi/
+│   ├── install.sh
+│   ├── config.env.example
+│   ├── runtime/
+│   └── systemd/
 ├── test/
+│   ├── test_send_lr24_command.py
+│   ├── test_send_lr24_command_ui.py
+│   └── test_rpi_autostart.py
 └── docs/
 ```
 
-各模組負責內容：
+`tools/` 內的地面程式不會由 CMake 安裝；地面電腦必須保留此 repository，並從 repo 根目錄執行。
 
-```text
-communication
-負責 Pixhawk、地面站與雲台相機資料收發
+## 相容環境
 
-navigation
-負責將目標位置轉換成飛行控制命令
+| 元件 | 現行版本／要求 |
+|---|---|
+| 空中端 OS | Ubuntu 24.04 LTS（Raspberry Pi 或 Jetson Orin 類 Linux 伴飛電腦） |
+| ROS 2 | Jazzy |
+| PX4 | v1.17.x |
+| `px4_msgs` | `release/1.17` branch，必須和 PX4 message definitions 相符 |
+| Micro XRCE-DDS Agent | v2.4.3 |
+| C++ | C++17；CMake 3.8 以上 |
+| 地面端 | Windows 或 Ubuntu、Python 3.10 以上、pyserial |
+| GUI 額外需求 | Tkinter；Ubuntu 可安裝 `python3-tk` |
+| 飛控／通訊 | Pixhawk、兩顆設定相同的 MicoAir LR24-F、兩條不同的空中端 serial device |
 
-waypoint_manager
-負責航點清單、航點切換與抵達判斷
+本專案沒有使用 MAVSDK 或 MAVROS。PX4 v1.17 實機不要搭配 `px4_msgs` 的 `main` branch。
 
-target_tracker
-負責接收、檢查與濾波目標座標
+## 建置
 
-safety_manager
-負責通訊中斷、GPS 無效、目標遺失與返航邏輯
-```
-
----
-
-# 開發流程
-
-每個功能都應建立獨立 Branch，不要直接在 `master` 上開發。
-
-## 建立功能分支
+本 repo 與 `px4_msgs` 應放在同一個 colcon workspace 的 `src/` 下：
 
 ```bash
-git switch master
-git pull origin master
-git switch -c feature/功能名稱
+NYCU_ROS_WS=/home/pi/NYCU_ROS_WS
+cd "$NYCU_ROS_WS/src"
+
+# 尚未安裝 px4_msgs 時才執行
+git clone --branch release/1.17 https://github.com/PX4/px4_msgs.git
+
+source /opt/ros/jazzy/setup.bash
+cd "$NYCU_ROS_WS"
+rosdep install --from-paths src --ignore-src --rosdistro jazzy -r -y
+colcon build --packages-up-to my_offboard_cpp
+source install/setup.bash
 ```
 
-例如：
+完整的 PX4 TELEM2 參數、UART 電壓與 Micro XRCE-DDS Agent 安裝方式請先閱讀 [GPS GOTO 與 Pixhawk 連線操作指南](docs/gps_goto_program.md)。
+
+## Quick Start：GPS GOTO
+
+以下只提供入口；第一次接線或實飛前必須完成文件中的逐階段檢查。Pixhawk DDS 與空中 LR24 是兩個不同裝置，建議都使用穩定的 `/dev/serial/by-id/...` 路徑：
 
 ```bash
-git switch -c feature/gps-reader
-git switch -c feature/waypoint-navigation
-git switch -c feature/lr24-communication
-git switch -c feature/target-tracking
+ls -l /dev/serial/by-id/
+
+PIXHAWK_SERIAL=/dev/serial/by-id/REPLACE_WITH_PIXHAWK_UART_ADAPTER
+LR24_SERIAL=/dev/serial/by-id/REPLACE_WITH_AIRBORNE_LR24
 ```
 
-## 提交修改
+### 1. 空中端啟動 DDS Agent
 
 ```bash
-git add .
-git commit -m "Add GPS position reader"
-git push -u origin feature/gps-reader
+source /opt/ros/jazzy/setup.bash
+export ROS_DOMAIN_ID=0
+
+MicroXRCEAgent serial \
+  --dev "$PIXHAWK_SERIAL" \
+  -b 921600
 ```
 
-推送完成後，在 GitHub 建立 Pull Request，由其他成員檢查後再合併進 `master`。
+確認 PX4 topic 已出現：
 
----
+```bash
+ros2 topic echo /fmu/out/vehicle_status \
+  px4_msgs/msg/VehicleStatus \
+  --qos-reliability best_effort --once
+```
 
-# Branch 命名規則
+### 2. 空中端啟動 GPS GOTO 與 LR24 node
+
+另一個 terminal：
+
+```bash
+source /opt/ros/jazzy/setup.bash
+source "$NYCU_ROS_WS/install/setup.bash"
+
+ros2 launch my_offboard_cpp serial_gps_goto.launch.py \
+  lr24_port:="$LR24_SERIAL" \
+  lr24_baud_rate:=115200
+```
+
+`lr24_port` 是必填參數。`115200` 必須與空中端、地面端及兩顆 LR24-F 的設定一致；若硬體設定為 `57600`，所有端點必須一起修改。同一個 serial port 同時只能由一個程式開啟。
+
+### 3. 地面端啟動 GUI 或 CLI
+
+Windows PowerShell：
+
+```powershell
+py -m pip install pyserial
+py .\tools\send_lr24_command_ui.py
+```
+
+Ubuntu：
+
+```bash
+sudo apt install -y python3-serial python3-tk
+python3 tools/send_lr24_command_ui.py
+```
+
+GUI 目前預設 timeout 是 `2.0 s`，CLI 預設是 `8.0 s`。GPS GOTO 可能依序等待最多 2 秒 PX4 ACK 與 3 秒目標確認，因此使用 GUI 執行 GOTO 前，應手動將 timeout 設為至少 `8.0 s`。任何 timeout 都代表「結果未知」，不能直接重送飛航指令。
+
+### 4. 最短操作順序
 
 ```text
-feature/gps-reader
-feature/waypoint-navigation
-feature/ground-communication
-feature/target-tracking
-
-fix/gps-timeout
-fix/serial-packet-error
-
-test/sitl-waypoint
-docs/update-readme
+PING
+  ↓
+STATUS
+  ↓
+明確確認 ready_for_goto=true
+  ↓
+GOTO 或 GOTO_AMSL
+  ↓
+持續用 STATUS、QGC 與 RC 監看
+  ↓
+RTL 或由飛手接管
 ```
 
----
+Windows CLI 範例；請先把 `COM7`、座標與高度換成實際值：
 
-# Commit 訊息規則
-
-使用簡短且明確的英文描述，請使用現在簡單式動詞作為開頭：
-
-```text
-Add GPS position reader
-Add waypoint arrival detection
-Implement serial packet parser
-Fix target coordinate timeout
-Update ground communication document
+```powershell
+py .\tools\send_lr24_command.py --port COM7 --timeout 8 PING
+py .\tools\send_lr24_command.py --port COM7 --timeout 8 STATUS
+py .\tools\send_lr24_command.py --port COM7 --timeout 8 GOTO LAT_DEG LON_DEG REL_HOME_ALT_M
+py .\tools\send_lr24_command.py --port COM7 --timeout 8 RTL
 ```
 
-避免使用：
+收到 GOTO 的 `ACK` 只表示命令已被接受及確認，不表示飛機已抵達目標。必須持續查詢 `STATUS` 並監看飛機實際狀態。
 
-```text
-update
-test
-修改
-123
+## 指令表
+
+### GPS GOTO 主線
+
+| 指令 | 參數 | 說明 |
+|---|---|---|
+| `PING` | 無 | 測試 LR24 雙向通訊，預期回覆 `PONG` |
+| `HELP` | 無 | 列出 command node 認得的名稱；不保證目前 launch 已啟動對應 service |
+| `STATUS` | 無 | 查詢 GOTO 狀態、安全 gate 與 `ready_for_goto` |
+| `GOTO` | `lat lon relative_home_alt_m` | 相對 Home 高度的單點目標 |
+| `GOTO_AMSL` | `lat lon altitude_amsl_m` | AMSL 高度的單點目標；仍會換算並套用 relative-Home 限制 |
+| `RTL` | 無 | 要求 PX4 進入 `AUTO_RTL` |
+| `ABORT` | 無 | 目前與 `RTL` 相同 |
+
+正式飛航命令必須使用 `$CMD,...*XX` checksummed frame；CLI／GUI 會自動建立並驗證。不要對 `GOTO`、`RTL` 等命令使用 `--simple`。
+
+### Legacy Offboard 範例
+
+只有在空中端啟動 `serial_elrs_offboard.launch.py` 時，`ENABLE_STREAM`、`START_MISSION`、`START_OFFBOARD`、`STOP_OFFBOARD`、`LAND` 才有對應 service。GPS GOTO 主線未啟動 `my_offboard_node`，使用這些按鈕通常會收到 `ROS service not available`。
+
+## 主要 launch 參數
+
+| 參數 | 預設值 | 用途 |
+|---|---:|---|
+| `lr24_port` | 必填 | 空中端 LR24 serial device |
+| `lr24_baud_rate` | `115200` | LR24 USB serial baud |
+| `lr24_service_response_timeout_s` | `7.0` | command bridge 等待 ROS service 的上限 |
+| `telemetry_timeout_s` | `1.0` | PX4 telemetry 新鮮度上限 |
+| `gps_min_fix_type` | `3` | 最低 GPS fix type |
+| `gps_min_satellites` | `8` | 最少衛星數 |
+| `gps_max_horizontal_accuracy_m` | `5.0` | 最大水平誤差 |
+| `gps_max_vertical_accuracy_m` | `8.0` | 最大垂直誤差 |
+| `max_target_distance_m` | `2000.0` | 目標距目前位置及 Home 的上限 |
+| `min_relative_altitude_m` | `30.0` | 最低相對 Home 高度 |
+| `max_relative_altitude_m` | `120.0` | 最高相對 Home 高度 |
+| `ack_timeout_s` | `2.0` | 等待 PX4 command ACK |
+| `confirmation_timeout_s` | `3.0` | 等待 Auto Loiter 與 matching setpoint |
+| `arrival_horizontal_threshold_m` | `100.0` | 水平抵達門檻 |
+| `arrival_vertical_threshold_m` | `15.0` | 垂直抵達門檻 |
+| `arrival_hold_time_s` | `2.0` | 持續符合門檻後才判定抵達 |
+
+查看完整參數：
+
+```bash
+ros2 launch my_offboard_cpp serial_gps_goto.launch.py --show-args
 ```
 
----
+## Raspberry Pi 開機自動啟動
 
-# 測試規範
+在手動流程已驗證、workspace 已完成 build 後，可安裝 systemd 服務：
 
-所有控制功能都必須依照以下順序測試：
-
-1. 單元測試
-2. 假資料測試
-3. PX4 SITL 模擬測試
-4. 地面靜態測試
-5. 無螺旋槳測試
-6. 低風險飛行測試
-7. 完整任務測試
-
-未通過模擬與地面測試前，不得直接進行實際飛行。
-
----
-
-# 安全要求
-
-所有飛行功能必須具備：
-
-- GPS 無效檢查
-- 通訊逾時檢查
-- 目標資料逾時檢查
-- 最大高度限制
-- 最大速度限制
-- 最大目標距離限制
-- 地理圍欄
-- 手動接管功能
-- 立即中止功能
-- 返航或盤旋失效保護
-
-任何收到的外部座標都不能直接使用，必須先檢查範圍、時間戳記與合理性。
-
----
-
-# 目前進度
-
-## GPS 航點飛行
-
-- [ ] 取得 Pixhawk GPS
-- [ ] 顯示 GPS 資訊
-- [ ] 傳送單一航點
-- [ ] 多航點任務
-- [ ] 繞點飛行
-- [ ] SITL 測試
-- [ ] 實機測試
-
-## 目標追蹤
-
-- [ ] 定義目標資料格式
-- [ ] 接收相機組座標
-- [ ] 座標有效性檢查
-- [ ] 目標座標濾波
-- [ ] 追蹤控制
-- [ ] 目標遺失處理
-- [ ] SITL 測試
-- [ ] 實機測試
-
-## 地面站通訊
-
-- [ ] 純 Serial 傳輸
-- [ ] LR24-F 雙向通訊
-- [ ] 自訂封包格式
-- [ ] CRC 錯誤檢查
-- [ ] Heartbeat
-- [ ] 飛行狀態回傳
-- [ ] 地面控制命令
-- [ ] SSH 或網路連線測試
-
----
-
-# 開發環境
-
-請在此補上團隊統一使用的版本：
-
-```text
-作業系統：Ubuntu 24.04 LTS（Noble Numbat）
-ROS 2 版本：ROS 2 Jazzy Jalisco
-PX4 版本：PX4 v1.17.0 Stable
-MAVSDK 版本：MAVSDK v3.17.1（若使用 MAVSDK）
-MAVROS 版本：MAVROS 2.14.0（若使用 MAVROS）
-CMake 版本：TBD 執行 cmake --version 確認
-編譯器版本：TBD 執行 g++ --version 確認
-飛控型號：Holybro Pixhawk 6C Mini
-板外電腦：NVIDIA Jetson Orin Nano
-通訊模組：MicoAir LR24-F
+```bash
+sudo bash deploy/rpi/install.sh \
+  --user pi \
+  --workspace /home/pi/NYCU_ROS_WS \
+  --pixhawk-device /dev/serial/by-id/REPLACE_WITH_PIXHAWK_UART_ADAPTER \
+  --lr24-device /dev/serial/by-id/REPLACE_WITH_AIRBORNE_LR24
 ```
 
----
+這會管理 Micro XRCE-DDS Agent 與 GPS GOTO launch，使用非 root 帳號、等待 serial device，並在程序異常後重啟。安裝與驗收步驟請見 [RPi 開機自動啟動 DDS 與 ROS 2 節點](docs/rpi_autostart.md)。
 
-# 團隊協作原則
+目前 installer 的 build freshness 檢查沒有涵蓋 `global_goto_node`；修改核心 GOTO 程式後，安裝前必須自行重新執行 `colcon build --packages-up-to my_offboard_cpp`。
 
-- 不直接修改 `master`
-- 一個 Branch 只處理一個功能
-- 合併前必須完成基本測試
-- 通訊格式修改需要同步通知所有組別
-- 所有座標必須標明單位與座標系
-- 所有訊息必須附帶時間戳記
-- 參數不得直接寫死在程式中
-- 測試資料與正式飛行資料必須分開
-- 發生錯誤時，系統應優先進入安全狀態
+收工時應先執行 `sudo shutdown -h now`，等待系統完全關機後再斷電。不要直接拔除 Raspberry Pi 電源。
+
+## 測試
+
+不依賴 ROS 的 Python 測試：
+
+```bash
+python3 -B -m unittest discover -s test -p 'test_*.py' -v
+```
+
+ROS 2 workspace 測試：
+
+```bash
+source /opt/ros/jazzy/setup.bash
+source "$NYCU_ROS_WS/install/setup.bash"
+colcon test --packages-select my_offboard_cpp --event-handlers console_direct+
+colcon test-result --verbose
+```
+
+本次 repository review 在 Windows 執行 26 個 Python tests，結果全部通過；也通過 Python syntax compile 與 `git diff --check`。目前環境沒有 ROS 2／colcon，因此這不包含 C++ Linux build、ROS launch、SITL、systemd 或實機飛行驗證。
+
+所有飛航修改仍應依序通過：單元測試、假資料／SITL、地面拆槳、人工接管演練、低風險飛行，最後才進入完整任務測試。
+
+## 文件導覽
+
+| 文件 | 用途與狀態 |
+|---|---|
+| [LR24-F 快速測試與系統啟動實測手冊](docs/lr24_quick_test_guide.md) | 最短 bring-up 路徑、實測紀錄與常見問題 |
+| [LR24-F 地面站控制完整教學](docs/lr24_ground_station_tutorial.md) | Windows／Ubuntu 操作員完整流程；其中 GUI timeout 敘述仍待與目前 `2.0 s` 預設同步 |
+| [GPS GOTO 與 Pixhawk 連線操作指南](docs/gps_goto_program.md) | PX4、DDS、ROS workspace、SITL 與實機步驟 |
+| [RPi 自動啟動指南](docs/rpi_autostart.md) | systemd 安裝、管理與驗收 |
+| [LR24-F Link Test 使用教學](docs/lr24_link_test_tutorial.md) | 不含 ROS 的透明串列 loss／RTT 測試 |
+| [LR24 Serial／RC Offboard 操作](docs/lr24_serial_program.md) | 含 legacy local-NED Offboard 流程 |
+| [LR24 PPP／SSH 架構](docs/lr24_ppp_program.md) | 實驗性替代連線方案，不是現行 GPS GOTO 主線 |
+| [控制架構](docs/control_architecture.md) | 早期概念與硬體分工；部分 MAVLink／Jetson-only 描述已過時 |
+| [LR24 通訊設計](docs/lr24_communication.md) | 早期 feature／legacy 背景；主線行為以本 README 與 GPS GOTO 文件為準 |
+
+## 已知限制與 Roadmap
+
+- 修正 GUI timeout 預設值、文件與 regression test 的不一致。
+- 補強 RPi installer 對 `global_goto_node` build freshness 的檢查。
+- 為 node respawn 加入 PX4 狀態重建、`UNKNOWN/RECOVERING` 狀態及跨程序 sequence 去重策略。
+- 為 `global_goto_node` 的 safety gate、ACK、RTL、preemption 建立 C++／ROS integration tests。
+- 驗證 PX4 v1.17 uXRCE-DDS、固定翼 SITL GOTO／RTL、serial 重連與 systemd 冷開機。
+- 為 legacy `STOP_OFFBOARD`／`LAND` 增加 PX4 ACK 與安全 mode 確認。
+- 實作多航點、雲台目標資料介面、座標濾波與追蹤狀態機。
+- 完整定義 geofence、terrain／AGL、速度／轉彎率及通訊失聯策略。
+- 完成 `package.xml` 的 description、maintainer、version、license，並加入 repository license。
+
+## 協作規範
+
+- 不直接在 `master` 開發；每個功能使用獨立 `feature/`、`fix/`、`test/` 或 `docs/` branch。
+- 合併前執行可用的自動測試，並清楚註明未執行的 C++、SITL 或實機項目。
+- 通訊格式、PX4 message version、安全參數及座標／高度基準的修改必須同步更新程式與文件。
+- Commit 使用簡短、明確的英文現在式，例如 `Add GPS status validation` 或 `Fix LR24 response timeout`。
+- 任何外部座標都必須標明單位與高度基準，且不得繞過安全檢查直接送入 PX4。
