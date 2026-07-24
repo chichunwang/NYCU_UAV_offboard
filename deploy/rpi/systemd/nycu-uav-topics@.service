@@ -1,0 +1,22 @@
+[Unit]
+Description=NYCU UAV GPS GOTO ROS 2 nodes (%i)
+Wants=nycu-uav-dds@%i.service
+After=nycu-uav-dds@%i.service
+PartOf=nycu-uav-offboard@%i.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=%i
+SupplementaryGroups=dialout
+ExecStart=/usr/local/lib/nycu-uav-offboard/start-topics.sh
+Restart=always
+RestartSec=10s
+KillSignal=SIGINT
+KillMode=control-group
+TimeoutStopSec=15s
+NoNewPrivileges=true
+UMask=0027
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=nycu-uav-topics-%i

@@ -23,6 +23,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <sys/stat.h>
 #include <termios.h>
 #include <unistd.h>
 #include <vector>
@@ -124,11 +125,20 @@ private:
 
     static constexpr size_t kDedupCacheLimit = 64;
     static constexpr size_t kMaxLineLength = 256;
+    static constexpr auto kSerialReconnectDelay = 2s;
+    static constexpr auto kSerialIdentityCheckInterval = 1s;
+    static constexpr auto kSerialRetryLogInterval = 60s;
 
     std::string port_;
     int baud_rate_ = 115200;
     double service_response_timeout_s_ = 7.0;
     int serial_fd_ = -1;
+    dev_t serial_device_id_ = 0;
+    dev_t serial_filesystem_id_ = 0;
+    ino_t serial_inode_ = 0;
+    std::chrono::steady_clock::time_point next_serial_open_attempt_{};
+    std::chrono::steady_clock::time_point next_serial_identity_check_{};
+    std::chrono::steady_clock::time_point next_serial_retry_log_{};
     std::string rx_buffer_;
     rclcpp::TimerBase::SharedPtr timer_;
     std::map<std::string, std::string> trigger_service_names_;
@@ -141,27 +151,38 @@ private:
 
     void timer_callback()
     {
+        const auto now = std::chrono::steady_clock::now();
+        if (serial_fd_ < 0 &&
+            now >= next_serial_open_attempt_)
+        {
+            open_serial();
+        } else if (
+            serial_fd_ >= 0 &&
+            now >= next_serial_identity_check_)
+        {
+            check_serial_device_identity();
+        }
+
         read_serial();
         poll_pending_services();
     }
 
     void open_serial()
     {
-        serial_fd_ = open(port_.c_str(), O_RDWR | O_NOCTTY | O_NONBLOCK);
-        if (serial_fd_ < 0) {
-            RCLCPP_ERROR(
-                this->get_logger(),
-                "Failed to open serial port %s: %s",
-                port_.c_str(),
-                std::strerror(errno));
+        const int fd = open(port_.c_str(), O_RDWR | O_NOCTTY | O_NONBLOCK);
+        if (fd < 0) {
+            const int error = errno;
+            log_serial_retry_error("open", error);
+            schedule_serial_reconnect();
             return;
         }
 
         termios tty{};
-        if (tcgetattr(serial_fd_, &tty) != 0) {
-            RCLCPP_ERROR(this->get_logger(), "tcgetattr failed: %s", std::strerror(errno));
-            close(serial_fd_);
-            serial_fd_ = -1;
+        if (tcgetattr(fd, &tty) != 0) {
+            const int error = errno;
+            log_serial_retry_error("tcgetattr", error);
+            close(fd);
+            schedule_serial_reconnect();
             return;
         }
 
@@ -179,12 +200,32 @@ private:
         cfsetispeed(&tty, baud);
         cfsetospeed(&tty, baud);
 
-        if (tcsetattr(serial_fd_, TCSANOW, &tty) != 0) {
-            RCLCPP_ERROR(this->get_logger(), "tcsetattr failed: %s", std::strerror(errno));
-            close(serial_fd_);
-            serial_fd_ = -1;
+        if (tcsetattr(fd, TCSANOW, &tty) != 0) {
+            const int error = errno;
+            log_serial_retry_error("tcsetattr", error);
+            close(fd);
+            schedule_serial_reconnect();
             return;
         }
+
+        struct stat device_status {};
+        const int fstat_result = fstat(fd, &device_status);
+        if (fstat_result != 0 || !S_ISCHR(device_status.st_mode)) {
+            const int error = fstat_result != 0 ? errno : ENODEV;
+            log_serial_retry_error("fstat", error);
+            close(fd);
+            schedule_serial_reconnect();
+            return;
+        }
+
+        serial_fd_ = fd;
+        serial_device_id_ = device_status.st_rdev;
+        serial_filesystem_id_ = device_status.st_dev;
+        serial_inode_ = device_status.st_ino;
+        next_serial_identity_check_ =
+            std::chrono::steady_clock::now() + kSerialIdentityCheckInterval;
+        next_serial_retry_log_ = {};
+        rx_buffer_.clear();
 
         RCLCPP_INFO(
             this->get_logger(),
@@ -193,6 +234,64 @@ private:
             baud_rate_);
 
         send_frame("STAT", "0", "BOOT", "LR24 command node ready");
+    }
+
+    void schedule_serial_reconnect()
+    {
+        next_serial_open_attempt_ =
+            std::chrono::steady_clock::now() + kSerialReconnectDelay;
+    }
+
+    void close_serial_and_schedule_reconnect()
+    {
+        if (serial_fd_ >= 0) {
+            close(serial_fd_);
+            serial_fd_ = -1;
+        }
+        serial_device_id_ = 0;
+        serial_filesystem_id_ = 0;
+        serial_inode_ = 0;
+        rx_buffer_.clear();
+        schedule_serial_reconnect();
+    }
+
+    void log_serial_retry_error(const char * operation, int error)
+    {
+        const auto now = std::chrono::steady_clock::now();
+        if (now < next_serial_retry_log_) {
+            return;
+        }
+
+        RCLCPP_ERROR(
+            this->get_logger(),
+            "Serial %s failed for %s: %s; retrying every %.1f s",
+            operation,
+            port_.c_str(),
+            std::strerror(error),
+            std::chrono::duration<double>(kSerialReconnectDelay).count());
+        next_serial_retry_log_ = now + kSerialRetryLogInterval;
+    }
+
+    void check_serial_device_identity()
+    {
+        next_serial_identity_check_ =
+            std::chrono::steady_clock::now() + kSerialIdentityCheckInterval;
+
+        struct stat path_status {};
+        if (stat(port_.c_str(), &path_status) == 0 &&
+            S_ISCHR(path_status.st_mode) &&
+            path_status.st_rdev == serial_device_id_ &&
+            path_status.st_dev == serial_filesystem_id_ &&
+            path_status.st_ino == serial_inode_)
+        {
+            return;
+        }
+
+        RCLCPP_WARN(
+            this->get_logger(),
+            "Serial device path %s disappeared or changed; reconnecting",
+            port_.c_str());
+        close_serial_and_schedule_reconnect();
     }
 
     speed_t baud_to_constant(int baud_rate)
@@ -235,7 +334,13 @@ private:
             }
 
             if (n < 0 && errno != EAGAIN && errno != EWOULDBLOCK) {
-                RCLCPP_ERROR(this->get_logger(), "Serial read error: %s", std::strerror(errno));
+                const int error = errno;
+                RCLCPP_ERROR(
+                    this->get_logger(),
+                    "Serial read error on %s: %s; reconnecting",
+                    port_.c_str(),
+                    std::strerror(error));
+                close_serial_and_schedule_reconnect();
             }
             break;
         }
@@ -705,13 +810,19 @@ private:
             }
 
             if (n < 0) {
-                RCLCPP_ERROR(this->get_logger(), "Serial write error: %s", std::strerror(errno));
+                const int error = errno;
+                RCLCPP_ERROR(
+                    this->get_logger(), "Serial write error: %s", std::strerror(error));
+                if (error != EAGAIN && error != EWOULDBLOCK) {
+                    close_serial_and_schedule_reconnect();
+                }
             } else {
                 RCLCPP_ERROR(
                     this->get_logger(),
                     "Serial short write: wrote %zu of %zu bytes",
                     offset,
                     text.size());
+                close_serial_and_schedule_reconnect();
             }
             break;
         }

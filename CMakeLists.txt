@@ -71,6 +71,12 @@ if(BUILD_TESTING)
   ament_add_pytest_test(test_send_lr24_command
     test/test_send_lr24_command.py
   )
+  ament_add_pytest_test(test_send_lr24_command_ui
+    test/test_send_lr24_command_ui.py
+  )
+  ament_add_pytest_test(test_rpi_autostart
+    test/test_rpi_autostart.py
+  )
 endif()
 
 ament_export_dependencies(rosidl_default_runtime)
