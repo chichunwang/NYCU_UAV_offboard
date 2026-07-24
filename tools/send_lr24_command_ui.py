@@ -36,7 +36,7 @@ from send_lr24_command import (
 
 BAUD_RATES = (57600, 115200)
 DEFAULT_BAUD_RATE = 115200
-DEFAULT_TIMEOUT = 8.0
+DEFAULT_TIMEOUT = 2.0
 FLIGHT_COMMANDS = frozenset(
     {
         "ENABLE_STREAM",
