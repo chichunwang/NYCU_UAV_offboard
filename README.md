@@ -1,9 +1,9 @@
 # NYCU UAV Offboard Control
 
-本專案是大型固定翼無人機的 ROS 2 伴飛控制與 LR24-F 地面指令系統。現行主線已從早期的 local-NED Offboard 方形範例，演進為「固定翼單點 GPS GOTO」流程：地面端透過 LR24-F 傳送命令，空中端檢查 PX4 遙測與飛行安全條件後，以 `DO_REPOSITION` 要求 PX4 飛向目標並進入 Auto Loiter。
+NYCU UAV 的第一代 ROS 2 板外控制與 LR24-F 地面指令系統。現行主線已從早期的 local-NED Offboard 方形範例，演進為「固定翼單點 GPS GOTO」流程：地面端透過 LR24-F 傳送命令，空中端檢查 PX4 遙測與飛行安全條件後，以 `DO_REPOSITION` 要求 PX4 飛向目標並進入 Auto Loiter。
 
 > [!CAUTION]
-> 這是飛航控制研究軟體，不是已完成認證的飛行產品。目前 LR24 雙向鏈路、封包與 Python 測試已有驗證紀錄；Pixhawk uXRCE-DDS 整合、固定翼 SITL GOTO／RTL、systemd 重開機驗收及實機飛行仍待完成。未通過 SITL、拆槳與地面測試前，不得直接實飛。
+> 這是飛航控制研究軟體，不是已完成認證的飛行產品。
 
 ## 目前狀態
 
@@ -17,7 +17,7 @@
 | LR24 serial 斷線重連 | 完成 | 靜態檢查 | 待完整拔插與重啟驗收 |
 | 單點 `GOTO`／`GOTO_AMSL` | 完成 | 尚無 C++ 行為測試 | DDS、SITL、實飛待驗證 |
 | `RTL`／`ABORT` | 完成 | 尚無 C++ 行為測試 | SITL、實飛待驗證 |
-| Raspberry Pi systemd 自動啟動 | 完成 | Python 靜態檢查 | 待多次冷開機實機驗收 |
+| Raspberry Pi systemd 自動啟動 | 完成 | Python 靜態檢查 | 待實機驗收 |
 | Legacy local-NED Offboard 方形範例 | 保留 | 尚無 C++ 行為測試 | 僅供 SITL／拆槳受控測試 |
 | 多航點任務 | 未實作 | — | — |
 | 雲台相機目標追蹤 | 未實作 | — | — |
