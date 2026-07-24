@@ -83,6 +83,8 @@ def generate_launch_description():
             executable="global_goto_node",
             name="global_goto_node",
             output="screen",
+            respawn=True,
+            respawn_delay=3.0,
             parameters=[global_goto_parameters],
         ),
         Node(
@@ -90,6 +92,8 @@ def generate_launch_description():
             executable="lr24_command_node",
             name="lr24_command_node",
             output="screen",
+            respawn=True,
+            respawn_delay=3.0,
             parameters=[{
                 "port": lr24_port,
                 "baud_rate": ParameterValue(lr24_baud_rate, value_type=int),

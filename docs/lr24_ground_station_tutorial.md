@@ -194,9 +194,12 @@ USB UART 的 `57600`／`115200 bps` 是電腦和 LR24 之間選定的速率，�
 
 如果尚未確認透明鏈路是否可靠，先完成 [LR24-F Link Test 使用教學](lr24_link_test_tutorial.md)。
 
-## 4. 空中端每次開機都要執行的程序
+## 4. 空中端開機時的常駐程序
 
-目前專案尚未建立 systemd 自動啟動服務，因此 Orin / RPi 每次重新開機後，都要確認以下兩個程序正在執行。
+完成首次手動測試前，Orin / RPi 每次重新開機後，都要確認以下兩個程序正在
+執行。手動流程驗證完成後，可依
+[RPi 開機自動啟動 DDS 與 ROS 2 節點](rpi_autostart.md)一次性安裝 systemd
+服務；之後開機會自動等待 USB 裝置並啟動以下相同程序。
 
 ### 4.1 Terminal A：Pixhawk DDS Agent
 
@@ -242,10 +245,12 @@ LR24 command node listening on ... at 115200 baud
 若看到：
 
 ```text
-Failed to open serial port
+Serial open failed for ...; retrying every 2.0 s
 ```
 
-表示空中端 LR24 路徑錯誤、權限不足或被其他程式占用。修正後必須重新啟動 launch；目前 node 不會在背景自動重開 serial port。
+表示空中端 LR24 路徑錯誤、權限不足或被其他程式占用。node 會每 2 秒在背景
+重試；修正裝置或權限後不需要重新啟動 launch。若錯誤持續出現，請確認
+`/dev/serial/by-id` 路徑及 ModemManager 設定。
 
 ### 4.3 空中端快速自我檢查
 

@@ -1,0 +1,20 @@
+[Unit]
+Description=NYCU UAV Micro XRCE-DDS Agent (%i)
+PartOf=nycu-uav-offboard@%i.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=%i
+SupplementaryGroups=dialout
+ExecStart=/usr/local/lib/nycu-uav-offboard/start-dds.sh
+Restart=always
+RestartSec=10s
+KillSignal=SIGINT
+KillMode=control-group
+TimeoutStopSec=15s
+NoNewPrivileges=true
+UMask=0027
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=nycu-uav-dds-%i

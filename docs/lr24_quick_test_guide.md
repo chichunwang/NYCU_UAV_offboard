@@ -301,6 +301,6 @@ sudo shutdown -h now
 - [x] 鏈路健檢 空中→地面：30/30、0%、RTT avg 39.5 ms
 - [x] 節點開機通告 `$STAT,0,BOOT,...` 地面實收
 - [x] 正式框架 `PING`→`ACK,PONG`、`HELP`→指令表
-- [x] 框架單元測試 `python -m pytest test/`：16 passed
+- [x] 框架單元測試 `python -m pytest test/`：全部通過（數量依目前版本為準）
 - [ ] Pixhawk uXRCE-DDS 橋接（`/fmu/` topics）
 - [ ] SITL `GOTO`/`RTL` 全流程

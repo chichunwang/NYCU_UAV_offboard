@@ -1,0 +1,8 @@
+[Unit]
+Description=NYCU UAV Offboard startup (%i)
+Wants=nycu-uav-dds@%i.service nycu-uav-topics@%i.service
+After=nycu-uav-dds@%i.service nycu-uav-topics@%i.service
+
+[Install]
+WantedBy=multi-user.target
+
